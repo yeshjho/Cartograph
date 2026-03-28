@@ -39,9 +39,6 @@
 #define LOCTEXT_NAMESPACE "Cartograph"
 
 
-DEFINE_LOG_CATEGORY(LogCartograph);
-
-
 template<IsFVector T, IsFVector U>
 void draw_line(UCanvas* Canvas, const T& WorldStart, const U& WorldEnd, const FLinearColor& Color, float Thickness)
 {
