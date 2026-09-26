@@ -36,18 +36,13 @@ struct FBeamExtraData
 
 enum class EBuildingDataType
 {
-	Invalid = 0,
-
-	Icon = 1 << 0,
-	Rectangle = 1 << 1,
-	Spline = 1 << 2,
-	Wire = 1 << 3,
-	Beam = 1 << 4,
-
-	Normal = Icon | Rectangle,
-	Special = Spline | Wire | Beam,
+	Invalid,
+	Icon,
+	Rectangle,
+	Spline,
+	Wire,
+	Beam,
 };
-ENUM_CLASS_FLAGS(EBuildingDataType)
 
 
 struct FRectangleDataCache
@@ -79,7 +74,6 @@ struct FBuildingData
 
 	uint32 BuildableClassHash = 0;
 	FTransform Transform;
-	//FFactoryCustomizationData CustomizationData;
 	std::variant<std::monostate, FSplineExtraData, FWireExtraData, FBeamExtraData> BuildableExtraData;
 
 
@@ -101,9 +95,6 @@ struct FBuildingData
 	void FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data
 	void FillInHash(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data
 	void FillInHashAndCache(const TSubclassOf<AFGBuildable>& BuildableClass);  // Call it after filling in the extra data
-    void FillInVisualBoxCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data
-
-    void FillInSplineVisualBoxCache();  // Call it after filling in the extra data & cache
 
 	static FVector2D GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass);
 };

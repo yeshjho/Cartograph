@@ -41,9 +41,6 @@ public:
 	void SetExpanded(bool DoExpand);
 
 
-private:
-
-
 protected:
 	UPROPERTY(BlueprintReadWrite)
 	bool IsExpanded = true;

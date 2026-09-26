@@ -32,16 +32,7 @@ public:
 		delete Data;
 	}
 
-	// Replacing it with casting...
-	/**
-	* FCanvasBatchedElementRenderItem instance accessor
-	*
-	* @return this instance
-	*/
-	//virtual class FCartographCanvasRenderItem* GetCanvasBatchedElementRenderItem() override
-	//{
-	//	return this;
-	//}
+	// GetCanvasBatchedElementRenderItem isn't overridden, casting instead.
 
 	/**
 	* Renders the canvas item.

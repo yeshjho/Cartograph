@@ -1,6 +1,6 @@
 ﻿#include "CartographGameInstanceModule.h"
 
-#include <sstream>
+#include <utility>
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "CanvasItem.h"
@@ -112,156 +112,77 @@ void UCartographGameInstanceModule::DispatchLifecycleEvent(ELifecyclePhase Phase
 
 
 #pragma region Hooking
-    const auto LambdaAfterAddFromBuildableInstanceData = 
-        [this](int32 ReturnValue, AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass,
-            FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData = false, int32 SaveDataBuildableIndex = INDEX_NONE, 
+	const auto ShouldSkipChange = [this] { return ShouldInitialize || IsClient || !GIsRunning; };
+
+	// Queues a building added/removed after initialization for the next redraw.
+	// ExtraDataSource is either the AFGBuildable* or the lightweight TypeSpecificData.
+	const auto QueueBuildingChange = [this, ShouldSkipChange](UClass* BuildableClass, const FTransform& Transform, const auto& ExtraDataSource, bool bRemoved)
+		{
+			if (ShouldSkipChange() || BuildableToIgnore.Contains(BuildableClass))
+			{
+				return;
+			}
+
+			CARTO_LOG_VERBOSE("%s: %s", bRemoved ? TEXT("Removed") : TEXT("Added"), *BuildableClass->GetName());
+
+			FBuildingData Data{ .Transform = Transform };
+			Data.AddExtraData(ExtraDataSource);
+			if (bRemoved)
+			{
+				Data.FillInHash(BuildableClass);  // Cache isn't used in comparison (==, <=>), so no need to fill it
+				PendingRemoveBuildingData.Add(std::move(Data));
+			}
+			else
+			{
+				Data.FillInHashAndCache(BuildableClass);
+				PendingAddBuildingData.Add(std::move(Data));
+			}
+
+			RedrawMap(false);
+		};
+
+	const auto LambdaAfterAddFromBuildableInstanceData =
+        [QueueBuildingChange](int32 ReturnValue, AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass,
+            FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData = false, int32 SaveDataBuildableIndex = INDEX_NONE,
             uint16 ConstructId = MAX_uint16, AActor* BuildEffectInstigator = nullptr, int32 BlueprintBuildEffectIndex = INDEX_NONE)
         {
-			const bool ShouldSkip = ShouldInitialize || FromSaveData || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("AddFromBuildableInstanceData: %s, Skip: %d", *BuildableClass->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
+			if (!FromSaveData)
 			{
-				return;
+				QueueBuildingChange(BuildableClass.Get(), BuildableInstanceData.Transform, BuildableInstanceData.TypeSpecificData, false);
 			}
-
-			if (BuildableToIgnore.Contains(BuildableClass.Get()))
-			{
-				return;
-			}
-
-			FBuildingData Data{
-					.Transform = BuildableInstanceData.Transform,
-					//.CustomizationData = BuildableInstanceData.CustomizationData,
-			};
-			Data.AddExtraData(BuildableInstanceData.TypeSpecificData);
-            Data.FillInHashAndCache(BuildableClass);
-			PendingAddBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
         };
 
-
 	const auto LambdaAfterAddFromReplicatedData =
-		[this](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, TSubclassOf<UFGRecipe> BuiltWithRecipe,
-			const FLightweightBuildableReplicationItem& ReplicationData, int32 MaxSize, 
+		[QueueBuildingChange](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, TSubclassOf<UFGRecipe> BuiltWithRecipe,
+			const FLightweightBuildableReplicationItem& ReplicationData, int32 MaxSize,
 			AActor* BuildEffectInstigator, int32 BlueprintBuildIndex)
 		{
-			const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("AddFromReplicatedData: %s, Skip: %d", *BuildableClass->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(BuildableClass.Get()))
-			{
-				return;
-			}
-
-			FBuildingData Data{
-					.Transform = ReplicationData.Transform,
-					//.CustomizationData = ReplicationData.CustomizationData,
-			};
-            Data.AddExtraData(ReplicationData.TypeSpecificData);
-			Data.FillInHashAndCache(BuildableClass);
-			PendingAddBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
+			QueueBuildingChange(BuildableClass.Get(), ReplicationData.Transform, ReplicationData.TypeSpecificData, false);
 		};
-
 
 	const auto LambdaAfterAddBuildable =
-		[this](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
+		[QueueBuildingChange](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
 		{
-            const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("AddBuildable: %s, Skip: %d", *Buildable->GetClass()->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(Buildable->GetClass()))
-			{
-				return;
-			}
-
-			FBuildingData Data{
-					.Transform = Buildable->GetTransform(),
-					//.CustomizationData = Buildable->GetCustomizationData_Native(),
-			};
-			Data.AddExtraData(Buildable);
-			Data.FillInHashAndCache(Buildable->GetClass());
-			PendingAddBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
+			QueueBuildingChange(Buildable->GetClass(), Buildable->GetTransform(), Buildable, false);
 		};
-
 
 	const auto LambdaAfterInvalidateRuntimeInstanceDataForIndex =
-		[this](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, int32 Index)
+		[QueueBuildingChange, ShouldSkipChange](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, int32 Index)
 		{
-            const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("InvalidateRuntimeInstanceDataForIndex: %s, Skip: %d", *BuildableClass->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
+			if (ShouldSkipChange())
 			{
 				return;
 			}
-
-			if (BuildableToIgnore.Contains(BuildableClass.Get()))
+			if (const FRuntimeBuildableInstanceData* LightweightData = ClassInstance->GetRuntimeDataForBuildableClassAndIndex(BuildableClass, Index))
 			{
-				return;
+				QueueBuildingChange(BuildableClass.Get(), LightweightData->Transform, LightweightData->TypeSpecificData, true);
 			}
-
-			const FRuntimeBuildableInstanceData* LightweightData = ClassInstance->GetRuntimeDataForBuildableClassAndIndex(BuildableClass, Index);
-
-			FBuildingData Data{
-					.Transform = LightweightData->Transform,
-					//.CustomizationData = Data->CustomizationData,
-			};
-			Data.AddExtraData(LightweightData->TypeSpecificData);
-			//Data.FillInHashAndCache(BuildableClass);  // Cache are not used in comparison (==, <=>) so we don't need to fill it
-			Data.FillInHash(BuildableClass);
-            PendingRemoveBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
 		};
 
-
 	const auto LambdaAfterRemoveBuildable =
-		[this](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
+		[QueueBuildingChange](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
 		{
-			const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("RemoveBuildable: %s, Skip: %d", *Buildable->GetClass()->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(Buildable->GetClass()))
-			{
-				return;
-			}
-
-            FBuildingData Data{
-                    .Transform = Buildable->GetTransform(),
-                    //.CustomizationData = Buildable->GetCustomizationData_Native(),
-            };
-            Data.AddExtraData(Buildable);
-            //Data.FillInHashAndCache(Buildable->GetClass());  // Cache are not used in comparison (==, <=>) so we don't need to fill it
-			Data.FillInHash(Buildable->GetClass());
-			PendingRemoveBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
+			QueueBuildingChange(Buildable->GetClass(), Buildable->GetTransform(), Buildable, true);
 		};
 
 
@@ -286,10 +207,7 @@ void UCartographGameInstanceModule::DispatchLifecycleEvent(ELifecyclePhase Phase
 			{
 				ShouldInitialize = false;
 				IsInitializing = true;
-				CurrentBuildingData.Empty();
-                BuildingDataIndexRedirector.Empty();
-                CurrentBuildingQuadTree.Empty();
-                BuildingCountMap.Empty();
+				ResetBuildingData();
 				RCO->ReceivedSliceCount = 0;
 				RCO->Buffer.Empty();
 				RCO->ServerRequestInitialBuildingData(PlayerController, EInitialDataSendPhase::Initial);
@@ -323,6 +241,14 @@ void UCartographGameInstanceModule::DispatchLifecycleEvent(ELifecyclePhase Phase
 			[](auto& Scope, FCanvas* ClassInstance,
 				FCanvas::EElementType InElementType, FBatchedElementParameters* InBatchedElementParameters, const FTexture* InTexture, ESimpleElementBlendMode InBlendMode, const FDepthFieldGlowInfo& GlowInfo, bool bApplyDPIScale)
 			{
+				// Only Cartograph's map canvas needs the custom render item (for the redraw scissor).
+				// Every other canvas must keep the engine implementation, otherwise its render data leaks VRAM.
+				if (!Instance || ClassInstance != Instance->CurrentCanvas)
+				{
+					Scope(ClassInstance, InElementType, InBatchedElementParameters, InTexture, InBlendMode, GlowInfo, bApplyDPIScale);
+					return;
+				}
+
 				// get sort element based on the current sort key from top of sort key stack
 				FCanvas::FCanvasSortElement& SortElement = ClassInstance->GetSortElement(ClassInstance->TopDepthSortKey());
 				// find a batch to use 
@@ -361,8 +287,7 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 {
 	CARTO_LOG("OnWorldLoaded");
 
-    IsInWorld = true;
-	//ShouldInitialize = true;  // It's too late here, the buildables are already registered. Moved to ModSubSystem.
+	// ShouldInitialize is set by ACartographModSubsystem, here it's too late: the buildables are already registered.
 	IsClient = GetWorld()->IsNetMode(NM_Client);
 
 	if (!IsClient)
@@ -396,14 +321,6 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 }
 
 
-void UCartographGameInstanceModule::OnWorldUnloaded()
-{
-	CARTO_LOG("OnWorldUnloaded");
-
-	IsInWorld = false;
-}
-
-
 void UCartographGameInstanceModule::OnLayerConfigChanged()
 {
 	CARTO_LOG_DEBUG("OnLayerConfigChanged");
@@ -431,6 +348,13 @@ bool UCartographGameInstanceModule::DoesBuildingExist(uint32 ClassHash) const
 }
 
 
+TSubclassOf<AFGBuildable> UCartographGameInstanceModule::ResolveBuildableClass(UClass* BuildableClass) const
+{
+	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(BuildableClass);
+	return RedirectClass ? RedirectClass->LoadSynchronous() : BuildableClass;
+}
+
+
 #pragma region Drawing
 void UCartographGameInstanceModule::RedrawMap(bool bRedrawEntirely)
 {
@@ -441,7 +365,8 @@ void UCartographGameInstanceModule::RedrawMap(bool bRedrawEntirely)
 			CARTO_LOG_DEBUG("RedrawMapCoroutine Cancel Requested");
 			Coroutine.Cancel();
 		}
-        IsPendingRedrawEntire = bRedrawEntirely;
+		// Don't let a later partial redraw request drop a pending entire one
+        IsPendingRedrawEntire |= bRedrawEntirely;
 		IsPendingRedraw = true;
 	}
 	else if (!IsClient || !IsInitializing)
@@ -464,10 +389,8 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::InitialBuildableGather(
     CARTO_LOG("InitialBuildableGather Started. Factories: %d, Buildings: %d", Factories.Num(), BuildingCount);
 
 	const int Total = Factories.Num() + BuildingCount;
-	CurrentBuildingData.Empty(Total);
-    BuildingDataIndexRedirector.Empty();
-    CurrentBuildingQuadTree.Empty();
-    BuildingCountMap.Empty();
+	ResetBuildingData();
+	CurrentBuildingData.Reserve(Total);
 
 	const float TimeBudget = FCartograph_ConfigStruct::GetActiveConfig(GetWorld()).InitializeTimeBudget;
 	UE5Coro::Latent::FTickTimeBudget Budget = UE5Coro::Latent::FTickTimeBudget::Milliseconds(TimeBudget);
@@ -481,10 +404,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::InitialBuildableGather(
 			continue;
 		}
 		
-		FBuildingData NewBuildingData{
-			.Transform = Factory->GetTransform(),
-            //.CustomizationData = Factory->GetCustomizationData_Native(),
-		};
+		FBuildingData NewBuildingData{ .Transform = Factory->GetTransform() };
         NewBuildingData.AddExtraData(Factory.Get());
 		NewBuildingData.FillInHashAndCache(Factory->GetClass());
 
@@ -503,10 +423,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::InitialBuildableGather(
 
 		for (const FRuntimeBuildableInstanceData& InstanceData : Arr)
 		{
-			FBuildingData NewBuildingData{
-				.Transform = InstanceData.Transform,
-				//.CustomizationData = InstanceData.CustomizationData,
-			};
+			FBuildingData NewBuildingData{ .Transform = InstanceData.Transform };
             NewBuildingData.AddExtraData(InstanceData.TypeSpecificData);
 			NewBuildingData.FillInHashAndCache(Type);
 
@@ -525,8 +442,6 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::InitialBuildableGather(
 		OnBuildingDataAdd(BuildingData, i);
 	}
 
-	MinHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData[0].Transform.GetLocation().Z : -100;
-	MaxHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData.Last().Transform.GetLocation().Z : 100;
 	OnZFilterUpdated(0, 1);
 
 	CARTO_LOG("InitialBuildableGather Finished");
@@ -538,6 +453,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::InitialBuildableGather(
 
 	IsInitializing = false;
 	IsPendingRedraw = false;
+	IsPendingRedrawEntire = false;
 	ExecuteRedrawMapCoroutine(true);
 }
 
@@ -557,6 +473,13 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	UE5Coro::Latent::FTickTimeBudget Budget = UE5Coro::Latent::FTickTimeBudget::Milliseconds(TimeBudget);
 
     IsRedrawingEntirely |= bRedrawEntirely;
+
+	// Not on scope exit: a cancelled redraw has to hand its area over to the next one
+	const auto ResetRedrawArea = [this]
+		{
+			IsRedrawingEntirely = false;
+			RedrawArea = FBox2D{ ForceInit };
+		};
 
 	{
         UE5Coro::FCancellationGuard Guard{};  // We'll lose added/removed building information if the coroutine is cancelled
@@ -597,7 +520,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
                     CurrentBuildingData.RemoveAt(i);
 	                break;
 	            }
-                if (RemovedBuildingData > CurrentBuildingData[i])
+                if (RemovedBuildingData < CurrentBuildingData[i])  // Sorted by Z, we're past it
                 {
                     CARTO_LOG_ERROR("Can't find removed building data");
                     break;
@@ -607,11 +530,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 	        co_await Budget;
 	    }
 
-        MinHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData[0].Transform.GetLocation().Z : -100;
-        MaxHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData.Last().Transform.GetLocation().Z : 100;
-		const float Length = MaxHeight - MinHeight;
-		MinZFilter = FMath::Floor(MinCached * Length + MinHeight);
-		MaxZFilter = FMath::CeilToInt(MaxCached * Length + MinHeight);
+		UpdateZFilter();
 
 		CARTO_LOG_DEBUG("Buildings Change Processed");
 	}
@@ -664,9 +583,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
     const int32 Max = Algo::UpperBound(CurrentBuildingData, MaxZFilter);
     if (Min >= CurrentBuildingData.Num() || Max <= 0)
     {
-		IsRedrawingEntirely = false;
-		RedrawArea = {};
-		RedrawArea.bIsValid = false;
+		ResetRedrawArea();
         co_return;
     }
 
@@ -697,9 +614,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		const int* MaxIt = Algo::FindLastByPredicate(BuildingsToDraw, [Max](int32 Index) { return Index < Max; });
         if (!MinIt || !MaxIt)
         {
-			IsRedrawingEntirely = false;
-			RedrawArea = {};
-			RedrawArea.bIsValid = false;
+			ResetRedrawArea();
             co_return;
         }
 
@@ -713,7 +628,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 	for (int32 i : BuildingsToDraw)
 	{
-        const auto& [ClassHash, Transform/*, CustomizationData*/, BuildableExtraData, 
+        const auto& [ClassHash, Transform, BuildableExtraData,
 			DataType, DataCache, LayerDataCache, VisualBoxCache] = CurrentBuildingData[i];
 
 		CARTO_LOG_VERY_VERBOSE("%d | Buildable: %u, Transform: %s", i, ClassHash, *Transform.ToString());
@@ -802,13 +717,11 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 
 			if (CategoryData->OutlineThickness > 0)
 			{
-				draw_line(Canvas, Corners[0], Corners[1], CategoryData->OutlineColor, CategoryData->OutlineThickness);
-				co_await Budget;
-				draw_line(Canvas, Corners[1], Corners[2], CategoryData->OutlineColor, CategoryData->OutlineThickness);
-				co_await Budget;
-				draw_line(Canvas, Corners[2], Corners[3], CategoryData->OutlineColor, CategoryData->OutlineThickness);
-				co_await Budget;
-				draw_line(Canvas, Corners[3], Corners[0], CategoryData->OutlineColor, CategoryData->OutlineThickness);
+				for (int32 k = 0; k < 4; k++)
+				{
+					draw_line(Canvas, Corners[k], Corners[(k + 1) % 4], CategoryData->OutlineColor, CategoryData->OutlineThickness);
+					co_await Budget;
+				}
 			}
 
 			break;
@@ -884,9 +797,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		co_await Budget;
 	}
 
-	IsRedrawingEntirely = false;
-	RedrawArea = {};
-	RedrawArea.bIsValid = false;
+	ResetRedrawArea();
 
 	CARTO_LOG_DEBUG("RedrawMapCoroutine Finished");
 }
@@ -900,6 +811,7 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
     {
         UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, RenderContext);
 		RenderContext = {};
+		CurrentCanvas = nullptr;
     }
 
 	if (!IsPendingRedraw)
@@ -909,7 +821,7 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 
 	// The coroutine is also on the game thread, so I think no data race here.
     IsPendingRedraw = false;
-	ExecuteRedrawMapCoroutine(IsPendingRedrawEntire);
+	ExecuteRedrawMapCoroutine(std::exchange(IsPendingRedrawEntire, false));
 }
 
 
@@ -936,10 +848,7 @@ void UCartographGameInstanceModule::OnZFilterUpdated(float Min, float Max)
 {
 	MinCached = Min;
     MaxCached = Max;
-
-	const float Length = MaxHeight - MinHeight;
-	MinZFilter = FMath::Floor(Min * Length + MinHeight);
-	MaxZFilter = FMath::CeilToInt(Max * Length + MinHeight);
+	UpdateZFilter();
 
 	CARTO_LOG("Min is now %f and max is now %f", MinZFilter, MaxZFilter);
 
@@ -947,6 +856,27 @@ void UCartographGameInstanceModule::OnZFilterUpdated(float Min, float Max)
 	{
 		RedrawMap(true);
 	}
+}
+
+
+void UCartographGameInstanceModule::UpdateZFilter()
+{
+	// CurrentBuildingData is sorted by Z
+	MinHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData[0].Transform.GetLocation().Z : -100;
+	MaxHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData.Last().Transform.GetLocation().Z : 100;
+
+	const float Length = MaxHeight - MinHeight;
+	MinZFilter = FMath::Floor(MinCached * Length + MinHeight);
+	MaxZFilter = FMath::CeilToInt(MaxCached * Length + MinHeight);
+}
+
+
+void UCartographGameInstanceModule::ResetBuildingData()
+{
+	CurrentBuildingData.Empty();
+	BuildingDataIndexRedirector.Empty();
+	CurrentBuildingQuadTree.Empty();
+	BuildingCountMap.Empty();
 }
 #pragma endregion
 
@@ -1020,53 +950,40 @@ void UCartographGameInstanceModule::LoadRuntimeConfig()
 
 	RuntimeConfig = {};
 
-	// std::getline doesn't support std::string_view :(
+	// ParseIntoArray drops empty entries, so trailing separators are fine
+	TArray<FString> Entries;
+	ConfigInstance.MainCategoryToggle.ParseIntoArray(Entries, TEXT(","));
+	for (const FString& MainCategory : Entries)
 	{
-        std::wstringstream Stream{ *ConfigInstance.MainCategoryToggle };
-        std::wstring Line;
-        while (std::getline(Stream, Line, L','))
-        {
-			if (!Line.empty())
-			{
-				RuntimeConfig.DisabledLayerMainCategory.Add(FName{ Line.data() });
-			}
-        }
-    }
-    {
-        std::wstringstream Stream{ *ConfigInstance.SubCategoryToggle };
-        std::wstring MainCategoryLine;
-        while (std::getline(Stream, MainCategoryLine, L'|'))
-        {
-			const size_t MainCategoryColonIndex = MainCategoryLine.find(':');
-            if (MainCategoryColonIndex == std::wstring::npos)
-            {
-                CARTO_LOG_ERROR("Invalid BuildingToggle: %s", *ConfigInstance.BuildingToggle);
-                break;
-            }
-            std::wstring MainCategoryName = MainCategoryLine.substr(0, MainCategoryColonIndex);
-            const FName MainCategoryFName{ MainCategoryName.data() };
-
-            std::wstringstream SubCategoryStream{ MainCategoryLine.substr(MainCategoryColonIndex + 1) };
-            std::wstring SubCategoryLine;
-			while (std::getline(SubCategoryStream, SubCategoryLine, L','))
-			{
-				if (!SubCategoryLine.empty())
-				{
-					RuntimeConfig.DisabledLayerSubCategory.FindOrAdd(MainCategoryFName).Add(FName{ SubCategoryLine.data() });
-				}
-			}
-        }
+		RuntimeConfig.DisabledLayerMainCategory.Add(FName{ MainCategory });
 	}
 
+	// "Main:Sub,Sub|Main:Sub|"
+	ConfigInstance.SubCategoryToggle.ParseIntoArray(Entries, TEXT("|"));
+	for (const FString& Entry : Entries)
 	{
-		std::wstringstream Stream{ *ConfigInstance.BuildingToggle };
-		std::wstring Line;
-		while (std::getline(Stream, Line, L','))
+		FString MainCategory, SubCategories;
+		if (!Entry.Split(TEXT(":"), &MainCategory, &SubCategories))
 		{
-			if (!Line.empty())
-			{
-				RuntimeConfig.DisabledLayerBuildable.Add(std::stoul(Line));
-			}
+			CARTO_LOG_ERROR("Invalid SubCategoryToggle: %s", *ConfigInstance.SubCategoryToggle);
+			break;
+		}
+
+		TArray<FString> SubCategoryNames;
+		SubCategories.ParseIntoArray(SubCategoryNames, TEXT(","));
+		for (const FString& SubCategory : SubCategoryNames)
+		{
+			RuntimeConfig.DisabledLayerSubCategory.FindOrAdd(FName{ MainCategory }).Add(FName{ SubCategory });
+		}
+	}
+
+	ConfigInstance.BuildingToggle.ParseIntoArray(Entries, TEXT(","));
+	for (const FString& Hash : Entries)
+	{
+		// Skip garbage instead of aborting like std::stoul would (no exceptions in UE)
+		if (Hash.IsNumeric())
+		{
+			RuntimeConfig.DisabledLayerBuildable.Add(static_cast<uint32>(FCString::Strtoui64(*Hash, nullptr, 10)));
 		}
 	}
 
@@ -1078,55 +995,31 @@ void UCartographGameInstanceModule::LoadRuntimeConfig()
 void UCartographGameInstanceModule::SaveRuntimeConfig()
 {
 #if !UE_SERVER
-	const FConfigId ConfigId{ "Cartograph", "" };
 	const UConfigManager* ConfigManager = GetWorld()->GetGameInstance()->GetSubsystem<UConfigManager>();
-	const UConfigPropertySection* RootSection = ConfigManager->GetConfigurationRootSection(ConfigId);
+	const UConfigPropertySection* RootSection = ConfigManager->GetConfigurationRootSection(FConfigId{ "Cartograph", "" });
 
-	{
-		const TObjectPtr<UConfigProperty>* MainCategoryProperty = RootSection->SectionProperties.Find("MainCategoryToggle");
-		CARTO_LOG_ERROR_RETURN_IF_NULL(MainCategoryProperty);
-		auto* MainCategoryStringProperty = Cast<UConfigPropertyString>(*MainCategoryProperty);
-		CARTO_LOG_ERROR_RETURN_IF_NULL(MainCategoryStringProperty);
+	const auto SetStringProperty = [RootSection](const TCHAR* Name, const FString& Value)
+		{
+			const TObjectPtr<UConfigProperty>* Property = RootSection->SectionProperties.Find(Name);
+			CARTO_LOG_ERROR_RETURN_IF_NULL(Property);
+			auto* StringProperty = Cast<UConfigPropertyString>(*Property);
+			CARTO_LOG_ERROR_RETURN_IF_NULL(StringProperty);
+			StringProperty->Value = Value;
+			StringProperty->MarkDirty();
+		};
+	const auto NameToString = [](const FName& Name) { return Name.ToString(); };
 
-        TStringBuilder<500> Builder;
-        for (const FName& Name : RuntimeConfig.DisabledLayerMainCategory)
-        {
-			Builder.Appendf(TEXT("%s,"), *Name.ToString());
-        }
-        MainCategoryStringProperty->Value = Builder.ToString();
-		MainCategoryStringProperty->MarkDirty();
-	}
+	SetStringProperty(TEXT("MainCategoryToggle"), FString::JoinBy(RuntimeConfig.DisabledLayerMainCategory, TEXT(","), NameToString));
+
+	FString SubCategoryToggle;
+	for (const auto& [MainCategory, SubCategories] : RuntimeConfig.DisabledLayerSubCategory)
 	{
-		const TObjectPtr<UConfigProperty>* SubCategoryProperty = RootSection->SectionProperties.Find("SubCategoryToggle");
-        CARTO_LOG_ERROR_RETURN_IF_NULL(SubCategoryProperty);
-        auto* SubCategoryStringProperty = Cast<UConfigPropertyString>(*SubCategoryProperty);
-        CARTO_LOG_ERROR_RETURN_IF_NULL(SubCategoryStringProperty);
-        TStringBuilder<1000> Builder;
-        for (const auto& [MainCategory, SubCategories] : RuntimeConfig.DisabledLayerSubCategory)
-        {
-            Builder.Appendf(TEXT("%s:"), *MainCategory.ToString());
-            for (const FName& Name : SubCategories)
-            {
-				Builder.Appendf(TEXT("%s,"), *Name.ToString());
-            }
-            Builder.Append(TEXT("|"));
-        }
-        SubCategoryStringProperty->Value = Builder.ToString();
-        SubCategoryStringProperty->MarkDirty();
-    }
-    {
-	    const TObjectPtr<UConfigProperty>* BuildingProperty = RootSection->SectionProperties.Find("BuildingToggle");
-        CARTO_LOG_ERROR_RETURN_IF_NULL(BuildingProperty);
-        auto* BuildingStringProperty = Cast<UConfigPropertyString>(*BuildingProperty);
-        CARTO_LOG_ERROR_RETURN_IF_NULL(BuildingStringProperty);
-        TStringBuilder<11 * 551> Builder;
-        for (const uint32& Hash : RuntimeConfig.DisabledLayerBuildable)
-        {
-			Builder.Appendf(TEXT("%u,"), Hash);
-        }
-        BuildingStringProperty->Value = Builder.ToString();
-        BuildingStringProperty->MarkDirty();
+		SubCategoryToggle += MainCategory.ToString() + TEXT(":") + FString::JoinBy(SubCategories, TEXT(","), NameToString) + TEXT("|");
 	}
+	SetStringProperty(TEXT("SubCategoryToggle"), SubCategoryToggle);
+
+	SetStringProperty(TEXT("BuildingToggle"), FString::JoinBy(RuntimeConfig.DisabledLayerBuildable, TEXT(","),
+		[](uint32 Hash) { return FString::Printf(TEXT("%u"), Hash); }));
 
 	CARTO_LOG_DEBUG("RuntimeConfig Saved");
 #endif
@@ -1147,8 +1040,7 @@ void UCartographGameInstanceModule::FillBuildLayerDataCache()
 			continue;
 		}
 
-		const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-		const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
+		const TSubclassOf<AFGBuildable> BuildableClass = ResolveBuildableClass(OriginalBuildableClass.Get());
 
 		const uint32* BuildableClassHash = ClassPtrToClassIDMap.Find(BuildableClass);
 		if (!BuildableClassHash)
@@ -1646,7 +1538,7 @@ void UCartographGameInstanceModule::ProcessLayerCategoriesOverride(UClass* Overr
 	CARTO_LOG_ERROR_RETURN_IF_NULL(CDO);
     void* OverrideArray = Property->ContainerPtrToValuePtr<void>(CDO);
     const int32 Num = FScriptArrayHelper{ ArrayProperty, OverrideArray }.Num();
-    CARTO_LOG("Categories: %d", Num);
+    CARTO_LOG_DEBUG("Categories: %d", Num);
     for (int32 i = 0; i < Num; i++)
     {
 		void* ElementPtr = ArrayProperty->GetValueAddressAtIndex_Direct(ArrayProperty->Inner, OverrideArray, i);
@@ -1658,10 +1550,10 @@ void UCartographGameInstanceModule::ProcessLayerCategoriesOverride(UClass* Overr
 			OverrideStructProperty->CopyCompleteValue(OriginalStructProperty->ContainerPtrToValuePtr<void>(&OverrideValue), StructPropertyValue);
 		}
 
-		CARTO_LOG("MainCategory #%d", i);
-        CARTO_LOG("Name: %s", *OverrideValue.Name.ToString());
-        CARTO_LOG("DisplayName: %s", *OverrideValue.DisplayName.ToString());
-        CARTO_LOG("Priority: %d", OverrideValue.Priority);
+		CARTO_LOG_DEBUG("MainCategory #%d", i);
+        CARTO_LOG_DEBUG("Name: %s", *OverrideValue.Name.ToString());
+        CARTO_LOG_DEBUG("DisplayName: %s", *OverrideValue.DisplayName.ToString());
+        CARTO_LOG_DEBUG("Priority: %d", OverrideValue.Priority);
 
         if (!SubCategoriesArrayProperty)
         {
@@ -1670,7 +1562,7 @@ void UCartographGameInstanceModule::ProcessLayerCategoriesOverride(UClass* Overr
 
 		void* SubCategoriesArray = SubCategoriesArrayProperty->ContainerPtrToValuePtr<void>(ElementPtr);
         const int32 SubCategoryNum = FScriptArrayHelper{ SubCategoriesArrayProperty, SubCategoriesArray }.Num();
-		CARTO_LOG("SubCategories: %d", SubCategoryNum);
+		CARTO_LOG_DEBUG("SubCategories: %d", SubCategoryNum);
     	for (int32 j = 0; j < SubCategoryNum; j++)
 		{
 			const void* SubCategoriesElementPtr = SubCategoriesArrayProperty->GetValueAddressAtIndex_Direct(SubCategoriesArrayProperty->Inner, SubCategoriesArray, j);
@@ -1682,10 +1574,10 @@ void UCartographGameInstanceModule::ProcessLayerCategoriesOverride(UClass* Overr
 				OverrideStructProperty->CopyCompleteValue(OriginalStructProperty->ContainerPtrToValuePtr<void>(&SubCategoryData), StructPropertyValue);
 			}
 
-            CARTO_LOG("SubCategory #%d", j);
-            CARTO_LOG("Name: %s", *SubCategoryData.Name.ToString());
-            CARTO_LOG("DisplayName: %s", *SubCategoryData.DisplayName.ToString());
-            CARTO_LOG("Priority: %d", SubCategoryData.Priority);
+            CARTO_LOG_DEBUG("SubCategory #%d", j);
+            CARTO_LOG_DEBUG("Name: %s", *SubCategoryData.Name.ToString());
+            CARTO_LOG_DEBUG("DisplayName: %s", *SubCategoryData.DisplayName.ToString());
+            CARTO_LOG_DEBUG("Priority: %d", SubCategoryData.Priority);
 		}
     }
 }
@@ -1712,16 +1604,6 @@ void UCartographGameInstanceModule::GatherModOverrides()
 			return true;
 		});
 
-#define VAR(x) std::make_pair(std::ref(x), FName{ #x })
-	const auto OverrideableVariables = std::make_tuple(
-		VAR(BuildCategoryDataMap), VAR(BuildableBuildCategoryDataOverrideMap), VAR(MaterialBuildCategoryDataOverrideMap),
-		VAR(BuildableIconOverrideMap), VAR(BuildableSizeOverrideMap), VAR(BuildableExtraRotationMap),
-		VAR(BuildableSplineDataMap), VAR(BuildableWireDataMap),
-		VAR(BuildableClassRedirectMap), VAR(BuildableToIgnore),
-		/*VAR(LayerCategories),*/ VAR(BuildLayerDataMap), VAR(BuildableBuildLayerDataOverrideMap), VAR(MaterialBuildLayerDataOverrideMap));
-#undef VAR
-
-
 	for (const FAssetData& OverrideAssetData : OverrideAssetArray)
 	{
 		CARTO_LOG("Override Data Found: %s", *OverrideAssetData.PackageName.ToString());
@@ -1730,17 +1612,21 @@ void UCartographGameInstanceModule::GatherModOverrides()
 		UClass* OverrideDataClass = LoadObject<UClass>(nullptr, *OverrideDataClassName);
 		CARTO_LOG_ERROR_DO_IF_NULL(OverrideDataClass, continue);
 
-		const auto LambdaProcessOverrideData =
-			[this, OverrideDataClass, &OverrideableVariables]<size_t Index>()
-			{
-				auto& [VariableRef, Name] = std::get<Index>(OverrideableVariables);
-				ProcessOverrideData(VariableRef, OverrideDataClass, Name);
-			};
-
-		[&LambdaProcessOverrideData]<size_t ...Index>(std::index_sequence<Index...>)
-		{
-			(LambdaProcessOverrideData.template operator()<Index>(), ...);
-		}(std::make_index_sequence<std::tuple_size_v<decltype(OverrideableVariables)>>{});
+#define PROCESS_OVERRIDE(x) ProcessOverrideData(x, OverrideDataClass, FName{ #x })
+		PROCESS_OVERRIDE(BuildCategoryDataMap);
+		PROCESS_OVERRIDE(BuildableBuildCategoryDataOverrideMap);
+		PROCESS_OVERRIDE(MaterialBuildCategoryDataOverrideMap);
+		PROCESS_OVERRIDE(BuildableIconOverrideMap);
+		PROCESS_OVERRIDE(BuildableSizeOverrideMap);
+		PROCESS_OVERRIDE(BuildableExtraRotationMap);
+		PROCESS_OVERRIDE(BuildableSplineDataMap);
+		PROCESS_OVERRIDE(BuildableWireDataMap);
+		PROCESS_OVERRIDE(BuildableClassRedirectMap);
+		PROCESS_OVERRIDE(BuildableToIgnore);
+		PROCESS_OVERRIDE(BuildLayerDataMap);
+		PROCESS_OVERRIDE(BuildableBuildLayerDataOverrideMap);
+		PROCESS_OVERRIDE(MaterialBuildLayerDataOverrideMap);
+#undef PROCESS_OVERRIDE
 		ProcessLayerCategoriesOverride(OverrideDataClass);
 	}
 }
