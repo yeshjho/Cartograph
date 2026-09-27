@@ -17,14 +17,3 @@ void UCartographGameWorldModule::DispatchLifecycleEvent(ELifecyclePhase Phase)
     CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
     UCartographGameInstanceModule::Instance->OnWorldLoaded(GetWorld());
 }
-
-
-void UCartographGameWorldModule::BeginDestroy()
-{
-	Super::BeginDestroy();
-
-    CARTO_LOG("UCartographGameWorldModule Destroy")
-
-    CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-    UCartographGameInstanceModule::Instance->OnWorldUnloaded();
-}

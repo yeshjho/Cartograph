@@ -5,11 +5,8 @@
 #include "CartographGameWorldModule.generated.h"
 
 
-class UCartographGameInstanceModule;
-
-
 /**
- * 
+ *
  */
 UCLASS()
 class CARTOGRAPH_API UCartographGameWorldModule : public UGameWorldModule
@@ -18,5 +15,4 @@ class CARTOGRAPH_API UCartographGameWorldModule : public UGameWorldModule
 
 public:
 	virtual void DispatchLifecycleEvent(ELifecyclePhase Phase) override;
-	virtual void BeginDestroy() override;
 };

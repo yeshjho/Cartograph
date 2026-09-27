@@ -38,15 +38,6 @@ bool WriteQuantizedVector2D(const int32 Scale, const FVector2D& Value, FArchive&
 	constexpr uint32 MaxExponentAfterScaling = ScalarTypeSize == 4 ? 30U : 62U;
 	constexpr ScalarType MaxScaledValue = ScalarType(IntType(1) << MaxExponentAfterScaling);
 
-	// NaN values can be properly serialized using the full precision path, but they typically cause lots of errors
-	// for the typical engine use case.
-	//if (Value.ContainsNaN())
-	//{
-	//	logOrEnsureNanError(TEXT("%s"), TEXT("WriteQuantizedVector: Value isn't finite. Clearing for safety."));
-	//	WriteQuantizedVector(Scale, T{ 0,0,0 }, Ar);
-	//	return false;
-	//}
-
 	const ScalarType Factor = IntCastChecked<int16>(Scale);
 	FVector2D ScaledValue;
 	ScaledValue.X = Value.X * Factor;

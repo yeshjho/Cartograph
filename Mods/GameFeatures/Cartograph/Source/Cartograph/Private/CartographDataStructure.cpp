@@ -15,7 +15,6 @@
 bool FBuildingData::operator==(const FBuildingData& Other) const noexcept
 {
 	return BuildableClassHash == Other.BuildableClassHash && Transform.Equals(Other.Transform) && BuildableExtraData == Other.BuildableExtraData;
-	// Ignoring CustomizationData on purpose
 }
 
 
@@ -32,43 +31,26 @@ std::partial_ordering FBuildingData::operator<=>(float Z) const noexcept
 }
 
 
+// Same layout as TArray's own serialization, but with quantized elements
 FArchive& operator<<(FArchive& Ar, TArray<FVector2D>& A)
 {
-	A.CountBytes(Ar);
-
-	using SizeType = int32;
-	SizeType SerializeNum = Ar.IsLoading() ? 0 : A.Num();
-
-	Ar << SerializeNum;
-
-	if (SerializeNum == 0)
-	{
-		// if we are loading, then we have to reset the size to 0, in case it isn't currently 0
-		if (Ar.IsLoading())
-		{
-			A.Empty();
-		}
-		return Ar;
-	}
-
+	int32 Num = A.Num();
+	Ar << Num;
 	if (Ar.IsLoading())
 	{
-		// Required for resetting ArrayNum
-		A.Empty(SerializeNum);
-
-		for (SizeType i = 0; i < SerializeNum; i++)
+		// Splines have SPLINE_SEGMENTS + 1 points, anything way bigger means a corrupted stream
+		if (Num < 0 || Num > 1024)
 		{
-			SerializeQuantizedVector2D<1>(A.AddDefaulted_GetRef(), Ar);
+			Ar.SetError();
+			return Ar;
 		}
+		A.SetNum(Num);
 	}
-	else
+
+	for (FVector2D& Point : A)
 	{
-		for (SizeType i = 0; i < SerializeNum; i++)
-		{
-			SerializeQuantizedVector2D<1>(A[i], Ar);
-		}
+		SerializeQuantizedVector2D<1>(Point, Ar);
 	}
-
 	return Ar;
 }
 
@@ -124,10 +106,7 @@ bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSucce
 		FVector Location = Transform.GetLocation();
 		bOutSuccess &= SerializePackedVector<1, 24>(Location, Ar);
 		Transform.Rotator().SerializeCompressedShort(Ar);
-
-		// We really need to pack the data, so we'll ignore scales for the clients.
-		//FVector Scale = Transform.GetScale3D();
-		//bOutSuccess &= SerializePackedVector<1, 24>(Scale, Ar);
+		// Scale is ignored on purpose, we really need to pack the data.
 	}
 	else
 	{
@@ -136,57 +115,21 @@ bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSucce
 		FRotator Rotation;
 		Rotation.SerializeCompressedShort(Ar);
 		Transform = FTransform{ Rotation, Location };
-
-		//FVector Scale;
-		//bOutSuccess &= SerializePackedVector<1, 24>(Scale, Ar);
-		//Transform.SetScale3D(Scale);
 	}
-
-	//Ar << CustomizationData;
 
 	int ExtraDataIndex = BuildableExtraData.index();
 	Ar.SerializeBits(&ExtraDataIndex, 2);  // NOTE: Increase the bits if more extra data types are added
-	if (!Ar.IsLoading())  // Serialize
-	{
-		std::visit([&Ar](auto&& Data)
-			{
-				Ar << Data;
-			},
-			BuildableExtraData
-		);
-	}
-	else  // Deserialize
+	if (Ar.IsLoading())
 	{
 		switch (ExtraDataIndex)
 		{
-		case 0:
-			BuildableExtraData = std::monostate{};
-			break;
-		case 1:
-		{
-			FSplineExtraData SplineData{};
-			Ar << SplineData;
-			BuildableExtraData = std::move(SplineData);
-			break;
-		}
-		case 2:
-		{
-			FWireExtraData WireData{};
-			Ar << WireData;
-			BuildableExtraData = std::move(WireData);
-			break;
-		}
-		case 3:
-		{
-			FBeamExtraData BeamData{};
-			Ar << BeamData;
-			BuildableExtraData = std::move(BeamData);
-			break;
-		}
-		default:
-			break;
+		case 1: BuildableExtraData.emplace<FSplineExtraData>(); break;
+		case 2: BuildableExtraData.emplace<FWireExtraData>(); break;
+		case 3: BuildableExtraData.emplace<FBeamExtraData>(); break;
+		default: BuildableExtraData.emplace<std::monostate>(); break;
 		}
 	}
+	std::visit([&Ar](auto& Data) { Ar << Data; }, BuildableExtraData);
 
 	if (Ar.IsLoading())
 	{
@@ -201,8 +144,8 @@ bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSucce
 		}
 	}
 
-	bOutSuccess = true;
-	return true;
+	bOutSuccess = !Ar.IsError();
+	return bOutSuccess;
 }
 
 
@@ -210,9 +153,7 @@ void FBuildingData::AddExtraData(AFGBuildable* Buildable)
 {
 	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
 
-	const TSoftClassPtr<AFGBuildable> Class = Buildable->GetClass();
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap.Find(Class);
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->Get() : Class.Get();
+	const TSubclassOf<AFGBuildable> BuildableClass = UCartographGameInstanceModule::Instance->ResolveBuildableClass(Buildable->GetClass());
 
 	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
 	{
@@ -261,39 +202,43 @@ void FBuildingData::AddExtraData(const FFGDynamicStruct& TypeSpecificData)
 }
 
 
+constexpr float BoxExpansionCentimeters = 300;
+
+
 void FBuildingData::FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass)
 {
+	// The visual box stays invalid for anything we don't draw, so it doesn't get into the quad tree
 	DataType = EBuildingDataType::Invalid;
+	VisualBoxCache = FBox2D{ ForceInit };
 
 	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
+	UCartographGameInstanceModule& Module = *UCartographGameInstanceModule::Instance;
 
-	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
+	const TSubclassOf<AFGBuildable> BuildableClass = Module.ResolveBuildableClass(OriginalBuildableClass.Get());
 
-	const uint32* ClassID = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass);
+	const uint32* ClassID = Module.ClassPtrToClassIDMap.Find(BuildableClass);
 	if (!ClassID)
 	{
 		CARTO_LOG_ERROR("Can't find hash for %s", *BuildableClass->GetName());
 		return;
 	}
 
-	const FBuildLayerData* LayerData = UCartographGameInstanceModule::Instance->GetBuildLayerData(*ClassID);
+	const FBuildLayerData* LayerData = Module.GetBuildLayerData(*ClassID);
 	if (!LayerData)
 	{
 		return;
 	}
 	LayerDataCache = LayerData;
 
+	// Modded buildings without their own data fall back to the unspecified defaults
+	const bool IsModded = Module.ModdedBuildings.Contains(BuildableClass.Get());
 
 	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
 	{
-		const auto& BuildableSplineDataMap = UCartographGameInstanceModule::Instance->BuildableSplineDataMap;
-
-		const FSplineData* SplineData = BuildableSplineDataMap.Find(BuildableClass.Get());
-		if (!SplineData && UCartographGameInstanceModule::Instance->ModdedBuildings.Contains(BuildableClass.Get()))
+		const FSplineData* SplineData = Module.BuildableSplineDataMap.Find(BuildableClass.Get());
+		if (!SplineData && IsModded)
 		{
-            SplineData = &UCartographGameInstanceModule::Instance->UnspecifiedSplineData;
+			SplineData = &Module.UnspecifiedSplineData;
 		}
 		if (!SplineData)
 		{
@@ -314,59 +259,51 @@ void FBuildingData::FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildab
 		}
 
 		DataType = EBuildingDataType::Spline;
-		DataCache = FSplineDataCache{
-			.SplineData = SplineData,
-		};
-
-		FillInSplineVisualBoxCache();
-
-        return;
+		DataCache = FSplineDataCache{ .SplineData = SplineData };
+		for (const FVector2D& Point : SplineExtraData->Points)
+		{
+			VisualBoxCache += Point;
+		}
 	}
-	else if (BuildableClass->IsChildOf(AFGBuildableWire::StaticClass()))
+	else if (BuildableClass->IsChildOf(AFGBuildableWire::StaticClass()) || BuildableClass->IsChildOf(AFGBuildableBeam::StaticClass()))
 	{
-		const auto& BuildableWireDataMap = UCartographGameInstanceModule::Instance->BuildableWireDataMap;
+		// Both are drawn as a single line using FWireData
+		const bool IsWire = BuildableClass->IsChildOf(AFGBuildableWire::StaticClass());
 
-		const FWireData* WireData = BuildableWireDataMap.Find(BuildableClass.Get());
-        if (!WireData && UCartographGameInstanceModule::Instance->ModdedBuildings.Contains(BuildableClass.Get()))
-        {
-            WireData = &UCartographGameInstanceModule::Instance->UnspecifiedWireData;
-        }
-		if (!WireData)
+		const FWireData* LineData = Module.BuildableWireDataMap.Find(BuildableClass.Get());
+		if (!LineData && IsModded)
+		{
+			LineData = &Module.UnspecifiedWireData;
+		}
+		if (!LineData)
 		{
 			CARTO_LOG_WARNING("Can't find wire data for %s", *BuildableClass->GetName());
 			return;
 		}
 
-		if (WireData->Thickness <= 0)  // We don't need to draw, so don't even bother initializing the data cache.
+		if (LineData->Thickness <= 0)  // We don't need to draw, so don't even bother initializing the data cache.
 		{
 			return;
 		}
 
-		DataType = EBuildingDataType::Wire;
-		DataCache = WireData;
-	}
-	else if (BuildableClass->IsChildOf(AFGBuildableBeam::StaticClass()))
-	{
-		const auto& BuildableWireDataMap = UCartographGameInstanceModule::Instance->BuildableWireDataMap;
-
-		const FWireData* BeamData = BuildableWireDataMap.Find(BuildableClass.Get());
-        if (!BeamData && UCartographGameInstanceModule::Instance->ModdedBuildings.Contains(BuildableClass.Get()))
-        {
-            BeamData = &UCartographGameInstanceModule::Instance->UnspecifiedWireData;
-        }
-		if (!BeamData)
+		FVector2D End;
+		if (IsWire)
 		{
-			CARTO_LOG_WARNING("Can't find beam data for %s", *BuildableClass->GetName());
-			return;
+			const FWireExtraData* WireExtraData = std::get_if<FWireExtraData>(&BuildableExtraData);
+			CARTO_LOG_ERROR_RETURN_IF_NULL(WireExtraData);
+			End = WireExtraData->End;
+		}
+		else
+		{
+			const FBeamExtraData* BeamExtraData = std::get_if<FBeamExtraData>(&BuildableExtraData);
+			CARTO_LOG_ERROR_RETURN_IF_NULL(BeamExtraData);
+			End = FVector2D{ Transform.GetLocation() + Transform.GetRotation().Vector() * BeamExtraData->Length };
 		}
 
-		if (BeamData->Thickness <= 0)  // We don't need to draw, so don't even bother initializing the data cache.
-		{
-			return;
-		}
-
-		DataType = EBuildingDataType::Beam;
-		DataCache = BeamData;
+		DataType = IsWire ? EBuildingDataType::Wire : EBuildingDataType::Beam;
+		DataCache = LineData;
+		VisualBoxCache += FVector2D{ Transform.GetLocation() };
+		VisualBoxCache += End;
 	}
 	else
 	{
@@ -378,71 +315,64 @@ void FBuildingData::FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildab
 		Size *= FVector2D{ Transform.GetScale3D() };
 
 		FRotator Rotation = Transform.GetRotation().Rotator();
-		auto& BuildableExtraRotationMap = UCartographGameInstanceModule::Instance->BuildableExtraRotationMap;
-		if (const FRotator* ExtraRotation = BuildableExtraRotationMap.Find(BuildableClass.Get()))
+		if (const FRotator* ExtraRotation = Module.BuildableExtraRotationMap.Find(BuildableClass.Get()))
 		{
 			Rotation += *ExtraRotation;
 		}
 
-		const FVector2D ScreenPosition = world_position_to_screen_position(Transform.GetLocation(), Size);
+		FNormalDataCache NormalData{
+			.ScreenPosition = world_position_to_screen_position(Transform.GetLocation(), Size),
+			.Size = Size,
+			.Rotation = Rotation,
+		};
 
-		auto& BuildableIconOverrideMap = UCartographGameInstanceModule::Instance->BuildableIconOverrideMap;
-		if (const TSoftObjectPtr<UTexture2D>* Texture = BuildableIconOverrideMap.Find(BuildableClass.Get());
+		const FCategoryData* CategoryData = nullptr;
+		if (const TSoftObjectPtr<UTexture2D>* Texture = Module.BuildableIconOverrideMap.Find(BuildableClass.Get());
 			Texture && !Texture->IsNull())
 		{
 			DataType = EBuildingDataType::Icon;
-			DataCache = FNormalDataCache{
-				.ScreenPosition = ScreenPosition,
-				.Size = Size,
-				.Rotation = Rotation,
-				.IconOrRectangleData = *Texture,
-			};
+			NormalData.IconOrRectangleData = *Texture;
 		}
 		else
 		{
-			const FCategoryData* CategoryData = UCartographGameInstanceModule::Instance->GetDataByBuildableClass(
-				UCartographGameInstanceModule::Instance->BuildableBuildCategoryDataOverrideMap,
-				UCartographGameInstanceModule::Instance->BuildCategoryDataMap,
-				BuildableClass.Get());
-			if (!CategoryData && UCartographGameInstanceModule::Instance->ModdedBuildings.Contains(BuildableClass.Get()))
+			CategoryData = Module.GetDataByBuildableClass(Module.BuildableBuildCategoryDataOverrideMap, Module.BuildCategoryDataMap, BuildableClass.Get());
+			if (!CategoryData && IsModded)
 			{
-				CategoryData = &UCartographGameInstanceModule::Instance->UnspecifiedCategoryData;
+				CategoryData = &Module.UnspecifiedCategoryData;
 			}
 			if (!CategoryData)
 			{
 				CARTO_LOG_WARNING("Can't find category data for %s", *BuildableClass->GetName());
 				return;
 			}
-
-			FRectangleDataCache RectangleData{
-				.CategoryData = CategoryData,
-			};
-
-			const float HalfWidth = Size.X / 2;
-			const float HalfHeight = Size.Y / 2;
-			RectangleData.Corners[0] = { -HalfWidth, -HalfHeight, 0 };
-			RectangleData.Corners[1] = { HalfWidth, -HalfHeight, 0 };
-			RectangleData.Corners[2] = { HalfWidth, HalfHeight, 0 };
-			RectangleData.Corners[3] = { -HalfWidth, HalfHeight, 0 };
-
-			FTransform TransformNoScale = Transform;
-			TransformNoScale.SetScale3D(FVector::OneVector);
-			for (FVector& Corner : RectangleData.Corners)
-			{
-				Corner = TransformNoScale.TransformPosition(Corner);
-			}
-
 			DataType = EBuildingDataType::Rectangle;
-			DataCache = FNormalDataCache{
-				.ScreenPosition = ScreenPosition,
-				.Size = Size,
-				.Rotation = Rotation,
-				.IconOrRectangleData = std::move(RectangleData),
-			};
 		}
+
+		// Corners of the rotated rectangle, which is also the visual box of an icon
+		const FVector2D HalfSize = Size / 2;
+		FTransform TransformNoScale = Transform;
+		TransformNoScale.SetScale3D(FVector::OneVector);
+		FRectangleDataCache RectangleData{ .CategoryData = CategoryData };
+		RectangleData.Corners[0] = TransformNoScale.TransformPosition(FVector{ -HalfSize.X, -HalfSize.Y, 0 });
+		RectangleData.Corners[1] = TransformNoScale.TransformPosition(FVector{ HalfSize.X, -HalfSize.Y, 0 });
+		RectangleData.Corners[2] = TransformNoScale.TransformPosition(FVector{ HalfSize.X, HalfSize.Y, 0 });
+		RectangleData.Corners[3] = TransformNoScale.TransformPosition(FVector{ -HalfSize.X, HalfSize.Y, 0 });
+		for (const FVector& Corner : RectangleData.Corners)
+		{
+			VisualBoxCache += FVector2D{ Corner };
+		}
+
+		if (DataType == EBuildingDataType::Rectangle)
+		{
+			NormalData.IconOrRectangleData = std::move(RectangleData);
+		}
+		DataCache = std::move(NormalData);
 	}
 
-	FillInVisualBoxCache(OriginalBuildableClass);
+	if (VisualBoxCache.bIsValid)
+	{
+		VisualBoxCache = VisualBoxCache.ExpandBy(BoxExpansionCentimeters);
+	}
 }
 
 
@@ -450,9 +380,7 @@ void FBuildingData::FillInHash(const TSubclassOf<AFGBuildable>& OriginalBuildabl
 {
 	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
 
-	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
+	const TSubclassOf<AFGBuildable> BuildableClass = UCartographGameInstanceModule::Instance->ResolveBuildableClass(OriginalBuildableClass.Get());
 
 	if (const uint32* Hash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass))
 	{
@@ -476,89 +404,6 @@ void FBuildingData::FillInHashAndCache(const TSubclassOf<AFGBuildable>& Buildabl
 	{
 		DataType = EBuildingDataType::Invalid;
 	}
-}
-
-
-constexpr float BoxExpansionCentimeters = 300;
-
-
-void FBuildingData::FillInVisualBoxCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass)
-{
-	VisualBoxCache = FBox2D{ ForceInit };
-
-	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-
-	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
-
-	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
-	{
-		FillInSplineVisualBoxCache();
-	}
-	else if (BuildableClass->IsChildOf(AFGBuildableWire::StaticClass()))
-	{
-		const FWireExtraData* WireExtraData = std::get_if<FWireExtraData>(&BuildableExtraData);
-		CARTO_LOG_ERROR_RETURN_IF_NULL(WireExtraData);
-
-		VisualBoxCache += FVector2D{ Transform.GetLocation() };
-		VisualBoxCache += WireExtraData->End;
-	}
-	else if (BuildableClass->IsChildOf(AFGBuildableBeam::StaticClass()))
-	{
-		const FBeamExtraData* BeamExtraData = std::get_if<FBeamExtraData>(&BuildableExtraData);
-		CARTO_LOG_ERROR_RETURN_IF_NULL(BeamExtraData);
-
-		const float Length = BeamExtraData->Length;
-		const FVector Start = Transform.GetLocation();
-		VisualBoxCache += FVector2D{ Start };
-		VisualBoxCache += FVector2D{ Start + Transform.GetRotation().Vector() * Length };
-	}
-	else
-	{
-		FVector2D Size = GetBuildingSize(BuildableClass);
-		if (Size.X == 0.f || Size.Y == 0.f)  // We don't need to draw, so don't even bother initializing the data cache.
-		{
-			return;
-		}
-		Size *= FVector2D{ Transform.GetScale3D() };
-
-		FVector Corners[4];
-		const float HalfWidth = Size.X / 2;
-		const float HalfHeight = Size.Y / 2;
-		Corners[0] = { -HalfWidth, -HalfHeight, 0 };
-		Corners[1] = { HalfWidth, -HalfHeight, 0 };
-		Corners[2] = { HalfWidth, HalfHeight, 0 };
-		Corners[3] = { -HalfWidth, HalfHeight, 0 };
-
-		FTransform TransformNoScale = Transform;
-		TransformNoScale.SetScale3D(FVector::OneVector);
-		for (FVector& Corner : Corners)
-		{
-			Corner = TransformNoScale.TransformPosition(Corner);
-			VisualBoxCache += FVector2D{ Corner };
-		}
-	}
-
-	if (VisualBoxCache.bIsValid)
-	{
-		VisualBoxCache = VisualBoxCache.ExpandBy(BoxExpansionCentimeters);
-	}
-}
-
-
-void FBuildingData::FillInSplineVisualBoxCache()
-{
-	VisualBoxCache = FBox2D{ ForceInit };
-
-	FSplineExtraData* SplineDataCachePtr = std::get_if<FSplineExtraData>(&BuildableExtraData);
-	CARTO_LOG_ERROR_RETURN_IF_NULL(SplineDataCachePtr);
-
-	for (const FVector2D& Point : SplineDataCachePtr->Points)
-	{
-		VisualBoxCache += Point;
-	}
-	VisualBoxCache = VisualBoxCache.ExpandBy(BoxExpansionCentimeters);
 }
 
 

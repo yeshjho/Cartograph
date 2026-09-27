@@ -15,7 +15,4 @@ class CARTOGRAPH_API UCartographMenuItemWidget : public UUserWidget
 
 public:
     virtual bool ShouldBeVisible() const { return true; }
-
-
-private:
 };
