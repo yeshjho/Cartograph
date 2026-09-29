@@ -1,6 +1,8 @@
 ﻿#include "CartographRemoteCallObject.h"
 
 #include "Net/UnrealNetwork.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
 
 #include "Module/GameInstanceModuleManager.h"
 
@@ -28,31 +30,24 @@ void UCartographRemoteCallObject::GetLifetimeReplicatedProps(TArray<FLifetimePro
 }
 
 
-void UCartographRemoteCallObject::ServerRequestInitialBuildingData_Implementation(APlayerController* PlayerController, EInitialDataSendPhase SendPhase)
+// No time out needed: the RCO (and the data with it) goes away with its player.
+void UCartographRemoteCallObject::ServerRequestInitialBuildingData_Implementation(APlayerController*, EInitialDataSendPhase SendPhase)
 {
-    constexpr float TimeOut = 10.f;
-
     switch (SendPhase)
     {
     case EInitialDataSendPhase::Initial:
     {
         CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-        // FBufferWriter doesn't handle moving properly, don't TakeOwnership and free manually.
-        // Another warning: FBufferWriter ignores FName
-        FBufferWriter Archive{ nullptr, 0, EBufferWriterFlags::AllowResize };
+        InitialBuildingDataToSend.Reset();
+        FMemoryWriter Archive{ InitialBuildingDataToSend };
 
-        // This should NOT be set since it'll prevent big array from being serialized.
+        // ArIsNetArchive should NOT be set since it'll prevent big array from being serialized.
         // It's OK since we'll divide them and send gradually.
-        //Archive.ArIsNetArchive = true;
-
         Archive << UCartographGameInstanceModule::Instance->CurrentBuildingData;
-        CARTO_LOG("Started Sending Initial Data: %d", Archive.TotalSize());
+        CARTO_LOG("Started Sending Initial Data: %d", InitialBuildingDataToSend.Num());
 
-        InitialBuildingDataToSendPerPlayer.Add(PlayerController, FInitialBuildingDataToSend{
-	            .InitialBuildingData = std::move(Archive),
-	            .Slices = Archive.TotalSize() / BuildingDataBufferMaxSize + 1,
-	            .LastSentSlice = -1,
-            });
+        SliceCount = InitialBuildingDataToSend.Num() / BuildingDataBufferMaxSize + 1;
+        LastSentSlice = -1;
         break;
     }
 
@@ -60,41 +55,31 @@ void UCartographRemoteCallObject::ServerRequestInitialBuildingData_Implementatio
         break;
 
     case EInitialDataSendPhase::Finished:
-    {
         CARTO_LOG("Finished Sending Initial Data");
-	    FInitialBuildingDataToSend& Data = *InitialBuildingDataToSendPerPlayer.Find(PlayerController);
-        GetWorld()->GetTimerManager().ClearTimer(Data.TimerHandle);
-        FMemory::Free(Data.InitialBuildingData.GetWriterData());
-        InitialBuildingDataToSendPerPlayer.Remove(PlayerController);
+        InitialBuildingDataToSend.Empty();
+        SliceCount = 0;
         return;
     }
+
+    if (LastSentSlice + 1 >= SliceCount)
+    {
+        return;
     }
 
-    auto& [InitialBuildingData, Slices, LastSentSlice, TimerHandle] = *InitialBuildingDataToSendPerPlayer.Find(PlayerController);
-
-    const int i = ++LastSentSlice;
+    const int32 i = ++LastSentSlice;
     FBuildingDataBuffer SendBuffer;
-    const int16 Size = FMath::Min(BuildingDataBufferMaxSize, InitialBuildingData.TotalSize() - i * BuildingDataBufferMaxSize);
-    FMemory::Memcpy(SendBuffer.Data, static_cast<uint8*>(InitialBuildingData.GetWriterData()) + i * BuildingDataBufferMaxSize, Size);
-    ClientReceiveInitialBuildingData(SendBuffer, Size, Slices);
+    const int16 Size = FMath::Min(BuildingDataBufferMaxSize, InitialBuildingDataToSend.Num() - i * BuildingDataBufferMaxSize);
+    FMemory::Memcpy(SendBuffer.Data, InitialBuildingDataToSend.GetData() + i * BuildingDataBufferMaxSize, Size);
+    ClientReceiveInitialBuildingData(SendBuffer, Size, SliceCount);
 
-    CARTO_LOG_DEBUG("Sending Initial Data (%d/%d)", i + 1, Slices);
-
-    GetWorld()->GetTimerManager().SetTimer(TimerHandle, [this, PlayerController]()
-        {
-            CARTO_LOG_WARNING("Initial Data Send Timed Out");
-
-            FInitialBuildingDataToSend& Data = *InitialBuildingDataToSendPerPlayer.Find(PlayerController);
-            FMemory::Free(Data.InitialBuildingData.GetWriterData());
-            InitialBuildingDataToSendPerPlayer.Remove(PlayerController);
-        }, TimeOut, false);
+    CARTO_LOG_DEBUG("Sending Initial Data (%d/%d)", i + 1, SliceCount);
 }
 
 
 void UCartographRemoteCallObject::ClientReceiveInitialBuildingData_Implementation(const FBuildingDataBuffer& Array, int16 Size, int16 TotalSliceCount)
 {
     CARTO_LOG_DEBUG("Received Initial Data");
-    Buffer.Append(Array.Data, Size);
+    Buffer.Append(Array.Data, FMath::Clamp<int32>(Size, 0, BuildingDataBufferMaxSize));
 
     CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
     ReceivedSliceCount++;
@@ -132,16 +117,21 @@ UE5Coro::TCoroutine<> UCartographRemoteCallObject::InitialBuildableDeserialize(F
     /// Below is from `FArchive& TArrayPrivateFriend::Serialize(FArchive& Ar, TArray<ElementType, AllocatorType>& A)`
     A.CountBytes(Ar);
 
-    int32 SerializeNum;
+    int32 SerializeNum = 0;
     Ar << SerializeNum;
 
-    //A.Empty(SerializeNum);  // If SerializeNum is big, this can cause a lag spike.
-    A.Empty();
+    A.Empty();  // Not reserving SerializeNum: if it's big, that can cause a lag spike.
 
     for (int32 i = 0; i < SerializeNum; i++)
     {
 	    FBuildingData& NewElement = A.AddDefaulted_GetRef();
         Ar << NewElement;
+        if (Ar.IsError())
+        {
+            CARTO_LOG_ERROR("Initial data is corrupted, stopping at %d/%d", i, SerializeNum);
+            A.RemoveAt(A.Num() - 1);
+            break;
+        }
         UCartographGameInstanceModule::Instance->OnBuildingDataAdd(NewElement, i);
         co_await Budget;
     }
@@ -153,7 +143,8 @@ UE5Coro::TCoroutine<> UCartographRemoteCallObject::InitialBuildableDeserialize(F
     }
 
     CARTO_LOG("InitialBuildableDeserialize Finished, %d", SerializeNum);
-    
+    Buffer.Empty();
+
     UCartographGameInstanceModule::Instance->IsInitializing = false;
     UCartographGameInstanceModule::Instance->OnZFilterUpdated(0, 1);
     UCartographGameInstanceModule::Instance->RedrawMap(true);
