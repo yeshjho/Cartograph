@@ -3,20 +3,10 @@
 #include "FGRemoteCallObject.h"
 
 #include "CoreMinimal.h"
-#include "Serialization/BufferWriter.h"
 
 #include "CartographGameInstanceModule.h"
 
 #include "CartographRemoteCallObject.generated.h"
-
-
-struct FInitialBuildingDataToSend
-{
-	FBufferWriter InitialBuildingData;
-	int64_t Slices;
-	int LastSentSlice;
-    FTimerHandle TimerHandle;
-};
 
 
 UENUM()
@@ -68,6 +58,7 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
+	// PlayerController is unused (each player has its own RCO), kept so the RPC stays compatible with 1.3.0.
 	UFUNCTION(Server, Reliable)
 	void ServerRequestInitialBuildingData(APlayerController* PlayerController, EInitialDataSendPhase SendPhase);
 	void ServerRequestInitialBuildingData_Implementation(APlayerController* PlayerController, EInitialDataSendPhase SendPhase);
@@ -85,7 +76,9 @@ protected:
 	bool bDummy = true;
 
 	// Server side
-	TMap<APlayerController*, FInitialBuildingDataToSend> InitialBuildingDataToSendPerPlayer;
+	TArray<uint8> InitialBuildingDataToSend;
+	int32 SliceCount = 0;
+	int32 LastSentSlice = -1;
 
 	// Client side
 	int16 ReceivedSliceCount = 0;

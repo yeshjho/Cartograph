@@ -185,13 +185,19 @@ public:
 	virtual void DispatchLifecycleEvent(ELifecyclePhase Phase) override;
 
 	void OnWorldLoaded(UWorld* World);
-	void OnWorldUnloaded();
+	void OnWorldTearDown(UWorld* World);
 
 	void OnLayerConfigChanged();
+
+	// The Cartograph.ExportMap console command
+	void ExportMap(FOutputDevice& Ar);
 
 	const FBuildLayerData* GetBuildLayerData(uint32 ClassHash);
 
 	bool DoesBuildingExist(uint32 ClassHash) const;
+
+	// Applies BuildableClassRedirectMap
+	TSubclassOf<AFGBuildable> ResolveBuildableClass(UClass* BuildableClass) const;
 
 	template<typename T>
 	const T* GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, UClass* BuildableClass) const;
@@ -204,6 +210,15 @@ private:
 	void OnCoroutineFinishedOrCancelled();
 
 	void ExecuteRedrawMapCoroutine(bool bRedrawEntirely);
+
+	void UpdateZFilter();
+	void ResetBuildingData();
+
+	void SaveMapCache();
+	bool LoadMapCache();
+	FString GetMapCachePath() const;
+	uint64 HashBuildingData() const;
+	uint32 HashDrawSettings() const;
 
 	void RegisterMenuButton() const;
 
@@ -354,7 +369,7 @@ protected:
 	bool IsInitializing = false;
 
 	UE5Coro::TCoroutine<> Coroutine = UE5Coro::TCoroutine<>::CompletedCoroutine;
-	FDrawToRenderTargetContext RenderContext;
+	// The map's own, while a redraw has it open
 	FCanvas* CurrentCanvas = nullptr;
 	TArray<FBuildingData> CurrentBuildingData;
 
@@ -374,7 +389,9 @@ protected:
 	FBox2D RedrawArea;
 	std::array<uint32, 4> ScissorArea;
 
-	bool IsInWorld = false;
+	// Whether the map changed since its image was last saved or loaded
+	bool IsMapCacheOutdated = true;
+
     bool IsClient = false;
 
 	float MinZFilter = -std::numeric_limits<float>::max();
@@ -390,8 +407,8 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	float MaxHeight = 100;
 
-	float MinCached;
-    float MaxCached;
+	float MinCached = 0;
+    float MaxCached = 1;
 
     UPROPERTY(BlueprintReadOnly)
     bool DoShowBuildings = true;
