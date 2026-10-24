@@ -142,7 +142,7 @@ UE5Coro::TCoroutine<> UCartographRemoteCallObject::InitialBuildableDeserialize(F
     {
 	    FBuildingData& NewElement = A.AddDefaulted_GetRef();
         Ar << NewElement;
-        UCartographGameInstanceModule::Instance->OnBuildingDataAdd(NewElement, i);
+        UCartographGameInstanceModule::Instance->OnInitialBuildingDataAdd(NewElement, i);
         co_await Budget;
     }
     /// End

@@ -86,9 +86,17 @@ bool FCartographCanvasRenderItem::Render_GameThread(const FCanvas* Canvas, FCanv
 			Canvas->GetFeatureLevel(),
 			Canvas->GetShaderPlatform()
 		};
+		bool IsCartograph = false;
+		std::array<uint32, 4> Area = {};
+		if (UCartographGameInstanceModule::Instance != nullptr && Canvas == UCartographGameInstanceModule::Instance->CurrentCanvas)
+		{
+			IsCartograph = true;
+			Area = UCartographGameInstanceModule::Instance->ScissorArea;
+		}
+
 		RenderScope.AddPass(
 			TEXT("CanvasBatchedElements"),
-			[DrawParameters, IsCartograph = UCartographGameInstanceModule::Instance && Canvas == UCartographGameInstanceModule::Instance->CurrentCanvas](FRHICommandList& RHICmdList)
+			[DrawParameters, IsCartograph, Area](FRHICommandList& RHICmdList)
 			{
 				/// The ViewRect doesn't seem to affect rendering in any way, so will use scissor.
 				FSceneView SceneView = FBatchedElements::CreateProxySceneView(DrawParameters.RenderData->Transform.GetMatrix(), FIntRect(0, 0, DrawParameters.ViewportSizeX, DrawParameters.ViewportSizeY));
@@ -101,7 +109,6 @@ bool FCartographCanvasRenderItem::Render_GameThread(const FCanvas* Canvas, FCanv
 
 				if (IsCartograph)
 				{
-					const std::array<uint32, 4>& Area = UCartographGameInstanceModule::Instance->ScissorArea;
 					RHICmdList.SetScissorRect(true, Area[0], Area[1], Area[2], Area[3]);
 				}
 				// draw batched items

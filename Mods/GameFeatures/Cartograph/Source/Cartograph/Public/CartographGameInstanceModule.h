@@ -205,6 +205,12 @@ private:
 
 	void ExecuteRedrawMapCoroutine(bool bRedrawEntirely);
 
+	void PrepareRenderTarget();
+	void ReleaseRenderTarget();
+
+	FCanvas* BeginMapDraw();
+	void EndMapDraw(FCanvas* Canvas);
+
 	void RegisterMenuButton() const;
 
 	void LoadRuntimeConfig();
@@ -213,6 +219,7 @@ private:
 	void FillBuildLayerDataCache();
 
 	void OnBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos);
+	void OnInitialBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos);
     void OnBuildingDataRemove(const FBuildingData& RemovedBuildingData, int32 Pos);
 
 	void GatherBuildables();
@@ -235,7 +242,10 @@ private:
 	TArray<FString> GetLayerCategoryOptions() const;
 
 	UFUNCTION(BlueprintCallable)
-	void OnVanillaMapMenuShown(const UUserWidget* Widget) const;
+	void OnVanillaMapMenuShown(const UUserWidget* Widget);
+
+	UFUNCTION(BlueprintCallable)
+	void OnVanillaMapMenuHidden();
 
 
 	template<typename T>
@@ -354,7 +364,6 @@ protected:
 	bool IsInitializing = false;
 
 	UE5Coro::TCoroutine<> Coroutine = UE5Coro::TCoroutine<>::CompletedCoroutine;
-	FDrawToRenderTargetContext RenderContext;
 	FCanvas* CurrentCanvas = nullptr;
 	TArray<FBuildingData> CurrentBuildingData;
 
@@ -376,6 +385,9 @@ protected:
 
 	bool IsInWorld = false;
     bool IsClient = false;
+
+	bool IsMapVisible = false;
+	bool HasUndrawnChanges = false;
 
 	float MinZFilter = -std::numeric_limits<float>::max();
     float MaxZFilter = std::numeric_limits<float>::max();

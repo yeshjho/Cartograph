@@ -11,6 +11,9 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Misc/OutputDeviceNull.h"
+#include "Containers/Ticker.h"
+#include "TextureResource.h"
+#include "RHIUtilities.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 
 #include "FGLightweightBuildableSubsystem.h"
@@ -43,7 +46,7 @@ DEFINE_LOG_CATEGORY(LogCartograph);
 
 
 template<IsFVector T, IsFVector U>
-void draw_line(UCanvas* Canvas, const T& WorldStart, const U& WorldEnd, const FLinearColor& Color, float Thickness)
+void draw_line(FCanvas* Canvas, const T& WorldStart, const U& WorldEnd, const FLinearColor& Color, float Thickness)
 {
     const FVector2D StartScreenPosition = world_position_to_screen_position(WorldStart, FVector::ZeroVector);
     const FVector2D EndScreenPosition = world_position_to_screen_position(WorldEnd, FVector::ZeroVector);
@@ -374,6 +377,8 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
     IsInWorld = true;
 	//ShouldInitialize = true;  // It's too late here, the buildables are already registered. Moved to ModSubSystem.
 	IsClient = GetWorld()->IsNetMode(NM_Client);
+	IsMapVisible = false;
+	HasUndrawnChanges = false;
 
 	if (!IsClient)
 	{
@@ -399,10 +404,7 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 			});
 	}
 
-	if (!FPlatformProperties::IsServerOnly())
-	{
-		UKismetRenderingLibrary::ClearRenderTarget2D(this, RenderTarget, { 0, 0, 0, 0 });
-	}
+	PrepareRenderTarget();
 }
 
 
@@ -411,6 +413,51 @@ void UCartographGameInstanceModule::OnWorldUnloaded()
 	CARTO_LOG("OnWorldUnloaded");
 
 	IsInWorld = false;
+	IsMapVisible = false;
+
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float DeltaTime)
+	{
+		if (!IsInWorld)
+		{
+			ReleaseRenderTarget();
+		}
+		return false;
+	}));
+}
+
+
+void UCartographGameInstanceModule::PrepareRenderTarget()
+{
+	if (FPlatformProperties::IsServerOnly())
+	{
+		return;
+	}
+	if (RenderTarget == nullptr)
+	{
+		return;
+	}
+
+	if (RenderTarget->GetResource() == nullptr)
+	{
+		RenderTarget->UpdateResource();
+	}
+	UKismetRenderingLibrary::ClearRenderTarget2D(this, RenderTarget, { 0, 0, 0, 0 });
+}
+
+
+void UCartographGameInstanceModule::ReleaseRenderTarget()
+{
+	if (RenderTarget == nullptr)
+	{
+		return;
+	}
+	if (RenderTarget->GetResource() == nullptr)
+	{
+		return;
+	}
+
+	CARTO_LOG("Releasing map render target");
+	RenderTarget->ReleaseResource();
 }
 
 
@@ -529,10 +576,12 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::InitialBuildableGather(
 
 	Algo::Sort(CurrentBuildingData);
 	const int Size = CurrentBuildingData.Num();
+	BuildingDataIndexRedirector.Reserve(Size);
 	for (int i = 0; i < Size; i++)
 	{
 		const FBuildingData& BuildingData = CurrentBuildingData[i];
-		OnBuildingDataAdd(BuildingData, i);
+		OnInitialBuildingDataAdd(BuildingData, i);
+		co_await Budget;
 	}
 
 	MinHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData[0].Transform.GetLocation().Z : -100;
@@ -631,14 +680,41 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		co_return;
 	}
 
+	if (!IsRedrawingEntirely && !RedrawArea.bIsValid)
+	{
+		co_return;
+	}
+
+	if (!IsRedrawingEntirely && !IsMapVisible)
+	{
+		HasUndrawnChanges = true;
+		co_return;
+	}
+
+	if (RenderTarget == nullptr || RenderTarget->GetResource() == nullptr)
+	{
+		PrepareRenderTarget();
+	}
+	if (RenderTarget == nullptr || RenderTarget->GetResource() == nullptr)
+	{
+		CARTO_LOG_ERROR("Map render target is not available");
+		co_return;
+	}
+
 	// Sometimes lines go crazy (goes to the top or far right) if we don't delay.
 	// My guess is because EndDraw and BeginDraw are called in the same frame, so I'm putting it here.
 	co_await UE5Coro::Latent::NextTick();
 
-	UCanvas* Canvas = nullptr;
-	FVector2D _;
-	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(this, RenderTarget, Canvas, _, RenderContext);
-	CurrentCanvas = Canvas->Canvas;
+	FCanvas* Canvas = BeginMapDraw();
+	if (Canvas == nullptr)
+	{
+		CARTO_LOG_ERROR("Could not start drawing the map");
+		co_return;
+	}
+	ON_SCOPE_EXIT
+	{
+		EndMapDraw(Canvas);
+	};
 
 	if (IsRedrawingEntirely)
 	{
@@ -675,6 +751,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
     if (Min >= CurrentBuildingData.Num() || Max <= 0)
     {
 		IsRedrawingEntirely = false;
+		HasUndrawnChanges = false;
 		RedrawArea = {};
 		RedrawArea.bIsValid = false;
         co_return;
@@ -708,6 +785,7 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
         if (!MinIt || !MaxIt)
         {
 			IsRedrawingEntirely = false;
+			HasUndrawnChanges = false;
 			RedrawArea = {};
 			RedrawArea.bIsValid = false;
             co_return;
@@ -894,7 +972,11 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 		co_await Budget;
 	}
 
+	EndMapDraw(Canvas);
+	Canvas = nullptr;
+
 	IsRedrawingEntirely = false;
+	HasUndrawnChanges = false;
 	RedrawArea = {};
 	RedrawArea.bIsValid = false;
 
@@ -906,28 +988,109 @@ void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
 {
     CARTO_LOG_DEBUG("OnCoroutineFinishedOrCancelled");
 
-	if (RenderContext.RenderTarget)
-	{
-        UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, RenderContext);
-		RenderContext = {};
-		CurrentCanvas = nullptr;
-	}
-
 	if (!IsPendingRedraw)
 	{
 		return;
 	}
 
-	// The coroutine is also on the game thread, so I think no data race here.
     IsPendingRedraw = false;
-	ExecuteRedrawMapCoroutine(IsPendingRedrawEntire);
+	bool RedrawEntirely = IsPendingRedrawEntire;
+
+	UWorld* World = GetWorld();
+	if (World == nullptr || !IsInWorld)
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimerForNextTick([this, RedrawEntirely]()
+	{
+		if (!IsInWorld)
+		{
+			return;
+		}
+
+		if (Coroutine.IsDone())
+		{
+			ExecuteRedrawMapCoroutine(RedrawEntirely);
+		}
+		else
+		{
+			IsPendingRedraw = true;
+			if (RedrawEntirely)
+			{
+				IsPendingRedrawEntire = true;
+			}
+		}
+	});
+}
+
+
+FCanvas* UCartographGameInstanceModule::BeginMapDraw()
+{
+	UWorld* World = GetWorld();
+	if (World == nullptr || RenderTarget == nullptr)
+	{
+		return nullptr;
+	}
+
+	FTextureRenderTargetResource* Resource = RenderTarget->GameThread_GetRenderTargetResource();
+	if (Resource == nullptr)
+	{
+		return nullptr;
+	}
+
+	World->FlushDeferredParameterCollectionInstanceUpdates();
+
+	FCanvas* Canvas = new FCanvas(Resource, nullptr, World, World->GetFeatureLevel(), FCanvas::CDM_ImmediateDrawing);
+	ENQUEUE_RENDER_COMMAND(CartographBeginMapDraw)([Resource](FRHICommandListImmediate& RHICmdList)
+	{
+		Resource->FlushDeferredResourceUpdate(RHICmdList);
+	});
+
+	CurrentCanvas = Canvas;
+	return Canvas;
+}
+
+
+void UCartographGameInstanceModule::EndMapDraw(FCanvas* Canvas)
+{
+	if (Canvas == nullptr)
+	{
+		return;
+	}
+
+	Canvas->Flush_GameThread();
+	if (CurrentCanvas == Canvas)
+	{
+		CurrentCanvas = nullptr;
+	}
+	delete Canvas;
+
+	if (RenderTarget == nullptr)
+	{
+		return;
+	}
+	FTextureRenderTargetResource* Resource = RenderTarget->GameThread_GetRenderTargetResource();
+	if (Resource == nullptr)
+	{
+		return;
+	}
+
+	ENQUEUE_RENDER_COMMAND(CartographEndMapDraw)([Resource](FRHICommandListImmediate& RHICmdList)
+	{
+		FRHITexture* Texture = Resource->GetRenderTargetTexture();
+		if (Texture != nullptr && !Texture->GetDesc().IsMultisample())
+		{
+			TransitionAndCopyTexture(RHICmdList, Texture, Resource->TextureRHI, {});
+		}
+	});
 }
 
 
 void UCartographGameInstanceModule::ExecuteRedrawMapCoroutine(bool bRedrawEntirely)
 {
 	Coroutine = RedrawMapCoroutine(PendingAddBuildingData, PendingRemoveBuildingData, bRedrawEntirely);
-	if (!IsClient)
+	if (!IsClient && (PendingAddBuildingData.Num() > 0 || PendingRemoveBuildingData.Num() > 0))
 	{
 		if (!ACartographModSubsystem::Instance)
 		{
@@ -1202,6 +1365,18 @@ void UCartographGameInstanceModule::FillBuildLayerDataCache()
 }
 
 
+void UCartographGameInstanceModule::OnInitialBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos)
+{
+	if (AddedBuildingData.VisualBoxCache.bIsValid)
+	{
+		CurrentBuildingQuadTree.Insert(BuildingDataIndexRedirector.Num(), AddedBuildingData.VisualBoxCache);
+		BuildingDataIndexRedirector.Add(Pos);
+	}
+
+	BuildingCountMap.FindOrAdd(AddedBuildingData.BuildableClassHash)++;
+}
+
+
 void UCartographGameInstanceModule::OnBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos)
 {
 	if (AddedBuildingData.VisualBoxCache.bIsValid)
@@ -1289,8 +1464,15 @@ TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
 }
 
 
-void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget) const
+void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget)
 {
+	IsMapVisible = true;
+	if (HasUndrawnChanges)
+	{
+		HasUndrawnChanges = false;
+		RedrawMap(false);
+	}
+
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
 	Menu->SetVisibility(ESlateVisibility::Collapsed);
@@ -1304,6 +1486,12 @@ void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Wid
 
 	FOutputDeviceNull Ar;
 	Button->CallFunctionByNameWithArguments(TEXT("SetShowHideText"), Ar, nullptr, true);
+}
+
+
+void UCartographGameInstanceModule::OnVanillaMapMenuHidden()
+{
+	IsMapVisible = false;
 }
 #pragma endregion
 
