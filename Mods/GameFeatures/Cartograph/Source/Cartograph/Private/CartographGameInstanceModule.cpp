@@ -2,36 +2,34 @@
 
 #include <sstream>
 
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "CanvasItem.h"
-#include "Components/CanvasPanelSlot.h"
-#include "Engine/Canvas.h"
-#include "Engine/CanvasRenderTarget2D.h"
 #include "Algo/FindLast.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
+#include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Engine/GameInstance.h"
 #include "Misc/OutputDeviceNull.h"
-#include "Blueprint/WidgetBlueprintGeneratedClass.h"
 
-#include "FGLightweightBuildableSubsystem.h"
-#include "Buildables/FGBuildable.h"
 #include "FGBuildableBeam.h"
 #include "FGBuildableSubsystem.h"
-#include "Buildables/FGBuildableWire.h"
-#include "Resources/FGBuildingDescriptor.h"
 #include "FGBuildCategory.h"
 #include "FGBuildSubCategory.h"
+#include "FGLightweightBuildableSubsystem.h"
 #include "FGPlayerController.h"
 #include "FGSaveSession.h"
 #include "FGSplineBuildableInterface.h"
+#include "Buildables/FGBuildable.h"
+#include "Buildables/FGBuildableWire.h"
+#include "Resources/FGBuildingDescriptor.h"
 
 #include "Configuration/Properties/ConfigPropertyString.h"
 #include "ModLoading/ModLoadingLibrary.h"
 #include "Patching/BlueprintHookManager.h"
 #include "Patching/NativeHookManager.h"
 
-#include "Util/CartographCanvasRenderItem.h"
-#include "CartographModSubsystem.h"
+#include "CartographBuildingDataSubsystem.h"
+#include "CartographMapDrawSubsystem.h"
 #include "CartographRemoteCallObject.h"
 #include "Cartograph_ConfigStruct.h"
 
@@ -39,378 +37,32 @@
 #define LOCTEXT_NAMESPACE "Cartograph"
 
 
-DEFINE_LOG_CATEGORY(LogCartograph);
-
-
-template<IsFVector T, IsFVector U>
-void draw_line(UCanvas* Canvas, const T& WorldStart, const U& WorldEnd, const FLinearColor& Color, float Thickness)
-{
-    const FVector2D StartScreenPosition = world_position_to_screen_position(WorldStart, FVector::ZeroVector);
-    const FVector2D EndScreenPosition = world_position_to_screen_position(WorldEnd, FVector::ZeroVector);
-	FCanvasLineItem LineItem{
-		StartScreenPosition,
-		EndScreenPosition
-	};
-	LineItem.LineThickness = Thickness;
-	LineItem.SetColor(Color);
-	// Only opaque lines are supported
-	// LineItem.BlendMode = FCanvas::BlendToSimpleElementBlend
-	Canvas->DrawItem(LineItem);
-}
-
-
-void UCartographGameInstanceModule::DispatchLifecycleEvent(ELifecyclePhase Phase)
+void UCartographGameInstanceModule::DispatchLifecycleEvent(const ELifecyclePhase Phase)
 {
 	Super::DispatchLifecycleEvent(Phase);
 
 	switch (Phase)
 	{
 	case ELifecyclePhase::CONSTRUCTION:
-		return;
+		break;
 
 	case ELifecyclePhase::INITIALIZATION:
+		CARTO_LOG("UCartographGameInstanceModule Init - INITIALIZATION")
+
 		RegisterMenuButton();
-		return;
+		break;
 
 	case ELifecyclePhase::POST_INITIALIZATION:
+		CARTO_LOG("UCartographGameInstanceModule Init - POST_INITIALIZATION")
+
+		Instance = this;
+
+		GatherBuildables();
+		GatherModOverrides();
+		FlattenMaterialData();
+		LoadRuntimeConfig();
 		break;
 	}
-
-    CARTO_LOG("UCartographGameInstanceModule Init")
-
-    GatherBuildables();
-	GatherModOverrides();
-
-	Instance = this;
-
-
-	for (const auto& [Material, CategoryData] : MaterialBuildCategoryDataOverrideMap)
-	{
-		for (const auto& [_, Recipe] : GetMutableDefault<UFGFactoryCustomizationDescriptor_Material>(Material)->GetBuildableMap())
-		{
-			TSubclassOf<AFGBuildable> Buildable = GetDefault<UFGBuildingDescriptor>(UFGRecipe::GetDescriptorForRecipe(Recipe))->mBuildableClass;
-			if (!BuildableBuildCategoryDataOverrideMap.Contains(Buildable.Get()))
-			{
-				BuildableBuildCategoryDataOverrideMap.Add(Buildable.Get(), CategoryData);
-			}
-		}
-	}
-
-	for (const auto& [Material, LayerData] : MaterialBuildLayerDataOverrideMap)
-	{
-		for (const auto& [_, Recipe] : GetMutableDefault<UFGFactoryCustomizationDescriptor_Material>(Material)->GetBuildableMap())
-		{
-			TSubclassOf<AFGBuildable> Buildable = GetDefault<UFGBuildingDescriptor>(UFGRecipe::GetDescriptorForRecipe(Recipe))->mBuildableClass;
-			if (!BuildableBuildLayerDataOverrideMap.Contains(Buildable.Get()))
-			{
-				BuildableBuildLayerDataOverrideMap.Add(Buildable.Get(), LayerData);
-			}
-		}
-	}
-
-	LoadRuntimeConfig();
-
-
-#pragma region Hooking
-    const auto LambdaAfterAddFromBuildableInstanceData = 
-        [this](int32 ReturnValue, AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass,
-            FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData = false, int32 SaveDataBuildableIndex = INDEX_NONE, 
-            uint16 ConstructId = MAX_uint16, AActor* BuildEffectInstigator = nullptr, int32 BlueprintBuildEffectIndex = INDEX_NONE)
-        {
-			const bool ShouldSkip = ShouldInitialize || FromSaveData || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("AddFromBuildableInstanceData: %s, Skip: %d", *BuildableClass->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(BuildableClass.Get()))
-			{
-				return;
-			}
-
-			FBuildingData Data{
-					.Transform = BuildableInstanceData.Transform,
-					//.CustomizationData = BuildableInstanceData.CustomizationData,
-			};
-			Data.AddExtraData(BuildableInstanceData.TypeSpecificData);
-            Data.FillInHashAndCache(BuildableClass);
-			PendingAddBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
-        };
-
-
-	const auto LambdaAfterAddFromReplicatedData =
-		[this](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, TSubclassOf<UFGRecipe> BuiltWithRecipe,
-			const FLightweightBuildableReplicationItem& ReplicationData, int32 MaxSize, 
-			AActor* BuildEffectInstigator, int32 BlueprintBuildIndex)
-		{
-			const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("AddFromReplicatedData: %s, Skip: %d", *BuildableClass->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(BuildableClass.Get()))
-			{
-				return;
-			}
-
-			FBuildingData Data{
-					.Transform = ReplicationData.Transform,
-					//.CustomizationData = ReplicationData.CustomizationData,
-			};
-            Data.AddExtraData(ReplicationData.TypeSpecificData);
-			Data.FillInHashAndCache(BuildableClass);
-			PendingAddBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
-		};
-
-
-	const auto LambdaAfterAddBuildable =
-		[this](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
-		{
-            const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("AddBuildable: %s, Skip: %d", *Buildable->GetClass()->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(Buildable->GetClass()))
-			{
-				return;
-			}
-
-			FBuildingData Data{
-					.Transform = Buildable->GetTransform(),
-					//.CustomizationData = Buildable->GetCustomizationData_Native(),
-			};
-			Data.AddExtraData(Buildable);
-			Data.FillInHashAndCache(Buildable->GetClass());
-			PendingAddBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
-		};
-
-
-	const auto LambdaAfterInvalidateRuntimeInstanceDataForIndex =
-		[this](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, int32 Index)
-		{
-            const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("InvalidateRuntimeInstanceDataForIndex: %s, Skip: %d", *BuildableClass->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(BuildableClass.Get()))
-			{
-				return;
-			}
-
-			const FRuntimeBuildableInstanceData* LightweightData = ClassInstance->GetRuntimeDataForBuildableClassAndIndex(BuildableClass, Index);
-
-			FBuildingData Data{
-					.Transform = LightweightData->Transform,
-					//.CustomizationData = Data->CustomizationData,
-			};
-			Data.AddExtraData(LightweightData->TypeSpecificData);
-			//Data.FillInHashAndCache(BuildableClass);  // Cache are not used in comparison (==, <=>) so we don't need to fill it
-			Data.FillInHash(BuildableClass);
-            PendingRemoveBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
-		};
-
-
-	const auto LambdaAfterRemoveBuildable =
-		[this](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
-		{
-			const bool ShouldSkip = ShouldInitialize || IsClient || !GIsRunning;
-
-			CARTO_LOG_VERBOSE("RemoveBuildable: %s, Skip: %d", *Buildable->GetClass()->GetName(), ShouldSkip);
-
-			if (ShouldSkip)
-			{
-				return;
-			}
-
-			if (BuildableToIgnore.Contains(Buildable->GetClass()))
-			{
-				return;
-			}
-
-            FBuildingData Data{
-                    .Transform = Buildable->GetTransform(),
-                    //.CustomizationData = Buildable->GetCustomizationData_Native(),
-            };
-            Data.AddExtraData(Buildable);
-            //Data.FillInHashAndCache(Buildable->GetClass());  // Cache are not used in comparison (==, <=>) so we don't need to fill it
-			Data.FillInHash(Buildable->GetClass());
-			PendingRemoveBuildingData.Add(std::move(Data));
-
-			RedrawMap(false);
-		};
-
-
-	const auto LambdaAfterCloseRespawnUI =
-        [this](AFGHUD* ClassInstance)
-        {
-            if (!ShouldInitialize || !GIsRunning)
-            {
-				return;
-            }
-
-            CARTO_LOG("CloseRespawnUI");
-
-	        AFGPlayerController* PlayerController = Cast<AFGPlayerController>(GetWorld()->GetFirstPlayerController());
-			if (PlayerController->HasAuthority())
-			{
-				return;
-			}
-
-			auto* RCO = PlayerController->GetRemoteCallObjectOfClass<UCartographRemoteCallObject>();
-			if (RCO)
-			{
-				ShouldInitialize = false;
-				IsInitializing = true;
-				CurrentBuildingData.Empty();
-                BuildingDataIndexRedirector.Empty();
-                CurrentBuildingQuadTree.Empty();
-                BuildingCountMap.Empty();
-				RCO->ReceivedSliceCount = 0;
-				RCO->Buffer.Empty();
-				RCO->ServerRequestInitialBuildingData(PlayerController, EInitialDataSendPhase::Initial);
-			}
-			else
-			{
-                CARTO_LOG_ERROR("Failed to get RemoteCallObject");
-			}
-        };
-
-
-	if (!WITH_EDITOR)
-	{
-		// Doing it after PlayerController::BeginPlay would interfere other network packets,
-	    // resulting higher chance of packet loss (due to timeout)
-		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGHUD, CloseRespawnUI, LambdaAfterCloseRespawnUI);
-
-
-		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromBuildableInstanceData, LambdaAfterAddFromBuildableInstanceData);
-	    SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromReplicatedData, LambdaAfterAddFromReplicatedData);
-
-		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, AddBuildable, LambdaAfterAddBuildable);
-
-
-		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, InvalidateRuntimeInstanceDataForIndex, LambdaAfterInvalidateRuntimeInstanceDataForIndex);
-
-		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, RemoveBuildable, LambdaAfterRemoveBuildable);
-
-
-		SUBSCRIBE_METHOD(FCanvas::GetBatchedElements,
-			[](auto& Scope, FCanvas* ClassInstance,
-				FCanvas::EElementType InElementType, FBatchedElementParameters* InBatchedElementParameters, const FTexture* InTexture, ESimpleElementBlendMode InBlendMode, const FDepthFieldGlowInfo& GlowInfo, bool bApplyDPIScale)
-			{
-				// The custom render item is only needed for Cartograph's map canvas,
-				// where it applies the redraw scissor. Let every other canvas use the
-				// engine implementation and its resource lifetime handling.
-				const UCartographGameInstanceModule* Cartograph = UCartographGameInstanceModule::Instance;
-				if (!Cartograph || ClassInstance != Cartograph->CurrentCanvas)
-				{
-					Scope(ClassInstance, InElementType, InBatchedElementParameters, InTexture, InBlendMode, GlowInfo, bApplyDPIScale);
-					return;
-				}
-
-				// get sort element based on the current sort key from top of sort key stack
-				FCanvas::FCanvasSortElement& SortElement = ClassInstance->GetSortElement(ClassInstance->TopDepthSortKey());
-				// find a batch to use 
-				FCartographCanvasRenderItem* RenderBatch = nullptr;
-				// get the current transform entry from top of transform stack
-				FCanvas::FTransformEntry FinalTransform = ClassInstance->GetTransformStack().Top();
-
-				if (!bApplyDPIScale && ClassInstance->GetDPIScale() != 1.0f)
-				{
-					FinalTransform = FCanvas::FTransformEntry(FScaleMatrix(1 / ClassInstance->GetDPIScale()) * FinalTransform.GetMatrix());
-				}
-
-				// try to use the current top entry in the render batch array
-				if (SortElement.RenderBatchArray.Num() > 0)
-				{
-					checkSlow(SortElement.RenderBatchArray.Last());
-					RenderBatch = static_cast<FCartographCanvasRenderItem*>(SortElement.RenderBatchArray.Last());
-				}
-
-				// if a matching entry for this batch doesn't exist then allocate a new entry
-				if (RenderBatch == nullptr ||
-					!RenderBatch->IsMatch(InBatchedElementParameters, InTexture, InBlendMode, InElementType, FinalTransform, GlowInfo))
-				{
-					RenderBatch = new FCartographCanvasRenderItem(InBatchedElementParameters, InTexture, InBlendMode, InElementType, FinalTransform, GlowInfo);
-					SortElement.RenderBatchArray.Add(RenderBatch);
-				}
-
-				Scope.Override(RenderBatch->GetBatchedElements());
-			});
-	}
-#pragma endregion
-}
-
-
-void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
-{
-	CARTO_LOG("OnWorldLoaded");
-
-    IsInWorld = true;
-	//ShouldInitialize = true;  // It's too late here, the buildables are already registered. Moved to ModSubSystem.
-	IsClient = GetWorld()->IsNetMode(NM_Client);
-
-	if (!IsClient)
-	{
-		// Wait for ACartographModSubsystem to initialize
-		GetWorld()->GetTimerManager().SetTimerForNextTick(
-			[this, World]()
-			{
-				if (!ShouldInitialize || !GIsRunning)
-				{
-					return;
-				}
-
-				ShouldInitialize = false;
-				IsInitializing = true;
-
-				TArray<TWeakObjectPtr<AFGBuildable>> Factories;
-				Algo::Transform(AFGBuildableSubsystem::Get(World)->GetAllBuildablesRef(), Factories,
-					[](AFGBuildable* Buildable) { return Buildable; });
-				Coroutine = InitialBuildableGather(
-					std::move(Factories),
-					AFGLightweightBuildableSubsystem::Get(World)->GetAllLightweightBuildableInstances()
-				);
-			});
-	}
-
-	if (!FPlatformProperties::IsServerOnly())
-	{
-		UKismetRenderingLibrary::ClearRenderTarget2D(this, RenderTarget, { 0, 0, 0, 0 });
-	}
-}
-
-
-void UCartographGameInstanceModule::OnWorldUnloaded()
-{
-	CARTO_LOG("OnWorldUnloaded");
-
-	IsInWorld = false;
 }
 
 
@@ -418,12 +70,15 @@ void UCartographGameInstanceModule::OnLayerConfigChanged()
 {
 	CARTO_LOG_DEBUG("OnLayerConfigChanged");
 
-	RedrawMap(true);
+	if (auto* MapDrawSubsystem = ACartographMapDrawSubsystem::Instance)
+	{
+		MapDrawSubsystem->RedrawMap();
+	}
 	SaveRuntimeConfig();
 }
 
 
-const FBuildLayerData* UCartographGameInstanceModule::GetBuildLayerData(uint32 ClassHash)
+const FBuildLayerData* UCartographGameInstanceModule::GetBuildLayerData(const uint32 ClassHash)
 {
 	FillBuildLayerDataCache();
 
@@ -432,32 +87,6 @@ const FBuildLayerData* UCartographGameInstanceModule::GetBuildLayerData(uint32 C
         return *DataCache;
     }
 	return nullptr;
-}
-
-
-bool UCartographGameInstanceModule::DoesBuildingExist(uint32 ClassHash) const
-{
-	return BuildingCountMap.FindRef(ClassHash) > 0;
-}
-
-
-#pragma region Drawing
-void UCartographGameInstanceModule::RedrawMap(bool bRedrawEntirely)
-{
-	if (!Coroutine.IsDone())
-	{
-		if (!IsInitializing)
-		{
-			CARTO_LOG_DEBUG("RedrawMapCoroutine Cancel Requested");
-			Coroutine.Cancel();
-		}
-        IsPendingRedrawEntire = bRedrawEntirely;
-		IsPendingRedraw = true;
-	}
-	else if (!IsClient || !IsInitializing)
-	{
-		ExecuteRedrawMapCoroutine(bRedrawEntirely);
-	}
 }
 
 
@@ -902,67 +531,8 @@ UE5Coro::TCoroutine<> UCartographGameInstanceModule::RedrawMapCoroutine(
 }
 
 
-void UCartographGameInstanceModule::OnCoroutineFinishedOrCancelled()
-{
-    CARTO_LOG_DEBUG("OnCoroutineFinishedOrCancelled");
-
-	if (RenderContext.RenderTarget)
-	{
-        UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(this, RenderContext);
-		RenderContext = {};
-		CurrentCanvas = nullptr;
-	}
-
-	if (!IsPendingRedraw)
-	{
-		return;
-	}
-
-	// The coroutine is also on the game thread, so I think no data race here.
-    IsPendingRedraw = false;
-	ExecuteRedrawMapCoroutine(IsPendingRedrawEntire);
-}
 
 
-void UCartographGameInstanceModule::ExecuteRedrawMapCoroutine(bool bRedrawEntirely)
-{
-	Coroutine = RedrawMapCoroutine(PendingAddBuildingData, PendingRemoveBuildingData, bRedrawEntirely);
-	if (!IsClient)
-	{
-		if (!ACartographModSubsystem::Instance)
-		{
-            CARTO_LOG_ERROR("ACartographModSubsystem is not initialized");
-		}
-		else
-		{
-			ACartographModSubsystem::Instance->ClientUpdateBuildingData(PendingAddBuildingData, PendingRemoveBuildingData);
-		}
-	}
-	PendingAddBuildingData.Empty();
-	PendingRemoveBuildingData.Empty();
-}
-
-
-void UCartographGameInstanceModule::OnZFilterUpdated(float Min, float Max)
-{
-	MinCached = Min;
-    MaxCached = Max;
-
-	const float Length = MaxHeight - MinHeight;
-	MinZFilter = FMath::Floor(Min * Length + MinHeight);
-	MaxZFilter = FMath::CeilToInt(Max * Length + MinHeight);
-
-	CARTO_LOG("Min is now %f and max is now %f", MinZFilter, MaxZFilter);
-
-	if (!IsInitializing)
-	{
-		RedrawMap(true);
-	}
-}
-#pragma endregion
-
-
-#pragma region UI
 void UCartographGameInstanceModule::RegisterMenuButton() const
 {
 	if (!FPlatformProperties::RequiresCookedData() || FPlatformProperties::IsServerOnly()) 
@@ -997,7 +567,7 @@ void UCartographGameInstanceModule::RegisterMenuButton() const
 	HBox->AddChild(ShowHideButton);
 
 	// Create Cartograph's Show/Hide menu button and add it to the hbox
-	UWidget* CartographMenuShowHideButton = WidgetTree->ConstructWidget<UWidget>(MenuShowHideButtonWidget, "CartographMenuShowHideButton");
+	UWidget* CartographMenuShowHideButton = WidgetTree->ConstructWidget<UWidget>(MenuShowHideButtonWidget.LoadSynchronous(), "CartographMenuShowHideButton");
 	auto* HBoxSlot = Cast<UHorizontalBoxSlot>(HBox->AddChild(CartographMenuShowHideButton));
 	HBoxSlot->SetPadding({ 10, 0, 0, 0 });
 
@@ -1008,9 +578,8 @@ void UCartographGameInstanceModule::RegisterMenuButton() const
     CARTO_LOG_ERROR_RETURN_IF_NULL(TextPtr);
     *TextPtr = LOCTEXT("CartographMenuShow", "Show Cartograph Menu");
 
-
 	// Now create the actual menu
-	UWidget* CartographMenu = NewObject<UWidget>(HBox, MenuWidget, "CartographMenu", RF_Transient);
+	UWidget* CartographMenu = NewObject<UWidget>(HBox, MenuWidget.LoadSynchronous(), "CartographMenu", RF_Transient);
 	auto* CartographMenuPanelSlot = Cast<UCanvasPanelSlot>(Parent->AddChild(CartographMenu));
     CartographMenuPanelSlot->SetLayout(MenuPanelSlot->GetLayout());
     CartographMenuPanelSlot->SetPosition(MenuPanelSlot->GetPosition());
@@ -1024,288 +593,24 @@ void UCartographGameInstanceModule::RegisterMenuButton() const
 }
 
 
-void UCartographGameInstanceModule::LoadRuntimeConfig()
+TSet<FTopLevelAssetPath> UCartographGameInstanceModule::GetDerivedClassPaths(UClass* ParentClass)
 {
-#if !UE_SERVER
-	const FCartograph_ConfigStruct ConfigInstance = FCartograph_ConfigStruct::GetActiveConfig(GetWorld());
+	TArray<UClass*> NativeRootClasses;
+	NativeRootClasses.Add(ParentClass);
+	GetDerivedClasses(ParentClass, NativeRootClasses);
 
-	RuntimeConfig = {};
+	TArray<FTopLevelAssetPath> NativeRootClassPaths;
 
-	// std::getline doesn't support std::string_view :(
-	{
-        std::wstringstream Stream{ *ConfigInstance.MainCategoryToggle };
-        std::wstring Line;
-        while (std::getline(Stream, Line, L','))
-        {
-			if (!Line.empty())
-			{
-				RuntimeConfig.DisabledLayerMainCategory.Add(FName{ Line.data() });
-			}
-        }
-    }
-    {
-        std::wstringstream Stream{ *ConfigInstance.SubCategoryToggle };
-        std::wstring MainCategoryLine;
-        while (std::getline(Stream, MainCategoryLine, L'|'))
-        {
-			const size_t MainCategoryColonIndex = MainCategoryLine.find(':');
-            if (MainCategoryColonIndex == std::wstring::npos)
-            {
-                CARTO_LOG_ERROR("Invalid BuildingToggle: %s", *ConfigInstance.BuildingToggle);
-                break;
-            }
-            std::wstring MainCategoryName = MainCategoryLine.substr(0, MainCategoryColonIndex);
-            const FName MainCategoryFName{ MainCategoryName.data() };
+	Algo::TransformIf(NativeRootClasses,
+					  NativeRootClassPaths,
+					  [](const UClass* RootClass) { return RootClass && RootClass->HasAnyClassFlags(CLASS_Native); },
+					  &UClass::GetClassPathName);
 
-            std::wstringstream SubCategoryStream{ MainCategoryLine.substr(MainCategoryColonIndex + 1) };
-            std::wstring SubCategoryLine;
-			while (std::getline(SubCategoryStream, SubCategoryLine, L','))
-			{
-				if (!SubCategoryLine.empty())
-				{
-					RuntimeConfig.DisabledLayerSubCategory.FindOrAdd(MainCategoryFName).Add(FName{ SubCategoryLine.data() });
-				}
-			}
-        }
-	}
+	TSet<FTopLevelAssetPath> AllClassPaths;
+	IAssetRegistry::Get()->GetDerivedClassNames(NativeRootClassPaths, {}, AllClassPaths);
 
-	{
-		std::wstringstream Stream{ *ConfigInstance.BuildingToggle };
-		std::wstring Line;
-		while (std::getline(Stream, Line, L','))
-		{
-			if (!Line.empty())
-			{
-				RuntimeConfig.DisabledLayerBuildable.Add(std::stoul(Line));
-			}
-		}
-	}
-
-	CARTO_LOG_DEBUG("RuntimeConfig Loaded");
-#endif
+	return AllClassPaths;
 }
-
-
-void UCartographGameInstanceModule::SaveRuntimeConfig()
-{
-#if !UE_SERVER
-	const FConfigId ConfigId{ "Cartograph", "" };
-	const UConfigManager* ConfigManager = GetWorld()->GetGameInstance()->GetSubsystem<UConfigManager>();
-	const UConfigPropertySection* RootSection = ConfigManager->GetConfigurationRootSection(ConfigId);
-
-	{
-		const TObjectPtr<UConfigProperty>* MainCategoryProperty = RootSection->SectionProperties.Find("MainCategoryToggle");
-		CARTO_LOG_ERROR_RETURN_IF_NULL(MainCategoryProperty);
-		auto* MainCategoryStringProperty = Cast<UConfigPropertyString>(*MainCategoryProperty);
-		CARTO_LOG_ERROR_RETURN_IF_NULL(MainCategoryStringProperty);
-
-        TStringBuilder<500> Builder;
-        for (const FName& Name : RuntimeConfig.DisabledLayerMainCategory)
-        {
-			Builder.Appendf(TEXT("%s,"), *Name.ToString());
-        }
-        MainCategoryStringProperty->Value = Builder.ToString();
-		MainCategoryStringProperty->MarkDirty();
-	}
-	{
-		const TObjectPtr<UConfigProperty>* SubCategoryProperty = RootSection->SectionProperties.Find("SubCategoryToggle");
-        CARTO_LOG_ERROR_RETURN_IF_NULL(SubCategoryProperty);
-        auto* SubCategoryStringProperty = Cast<UConfigPropertyString>(*SubCategoryProperty);
-        CARTO_LOG_ERROR_RETURN_IF_NULL(SubCategoryStringProperty);
-        TStringBuilder<1000> Builder;
-        for (const auto& [MainCategory, SubCategories] : RuntimeConfig.DisabledLayerSubCategory)
-        {
-            Builder.Appendf(TEXT("%s:"), *MainCategory.ToString());
-            for (const FName& Name : SubCategories)
-            {
-				Builder.Appendf(TEXT("%s,"), *Name.ToString());
-            }
-            Builder.Append(TEXT("|"));
-        }
-        SubCategoryStringProperty->Value = Builder.ToString();
-        SubCategoryStringProperty->MarkDirty();
-    }
-    {
-	    const TObjectPtr<UConfigProperty>* BuildingProperty = RootSection->SectionProperties.Find("BuildingToggle");
-        CARTO_LOG_ERROR_RETURN_IF_NULL(BuildingProperty);
-        auto* BuildingStringProperty = Cast<UConfigPropertyString>(*BuildingProperty);
-        CARTO_LOG_ERROR_RETURN_IF_NULL(BuildingStringProperty);
-        TStringBuilder<11 * 551> Builder;
-        for (const uint32& Hash : RuntimeConfig.DisabledLayerBuildable)
-        {
-			Builder.Appendf(TEXT("%u,"), Hash);
-        }
-        BuildingStringProperty->Value = Builder.ToString();
-        BuildingStringProperty->MarkDirty();
-	}
-
-	CARTO_LOG_DEBUG("RuntimeConfig Saved");
-#endif
-}
-
-
-void UCartographGameInstanceModule::FillBuildLayerDataCache()
-{
-	if (!BuildLayerDataMapCache.IsEmpty())
-	{
-		return;
-	}
-
-	for (const auto& [OriginalBuildableClass, _] : ClassPtrToClassIDMap)
-	{
-		if (!OriginalBuildableClass || BuildableToIgnore.Contains(OriginalBuildableClass.Get()))
-		{
-			continue;
-		}
-
-		const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-		const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
-
-		const uint32* BuildableClassHash = ClassPtrToClassIDMap.Find(BuildableClass);
-		if (!BuildableClassHash)
-		{
-			CARTO_LOG_ERROR("Can't find hash for %s", *BuildableClass->GetName());
-			continue;
-		}
-
-
-        const FBuildLayerData* LayerData = GetDataByBuildableClass(BuildableBuildLayerDataOverrideMap, BuildLayerDataMap, BuildableClass);
-		if (!LayerData && ModdedBuildings.Contains(BuildableClass.Get()))
-		{
-			const FString& ModName = *ModdedBuildings.Find(BuildableClass.Get());
-            LayerData = ModdedBuildLayerData.Find(ModName);
-		}
-		if (!LayerData)
-		{
-            CARTO_LOG_WARNING("Can't find layer data for %s", *BuildableClass->GetName());
-            continue;
-		}
-
-		if (LayerData->MainCategoryCache.IsNone())
-		{
-			TArray<FString> CategoryNames;
-			LayerData->Category.ParseIntoArray(CategoryNames, TEXT("/"));
-            if (CategoryNames.Num() == 0)
-            {
-                CARTO_LOG_ERROR("Invalid Category: %s", *LayerData->Category);
-                continue;
-            }
-
-			const_cast<FBuildLayerData*>(LayerData)->MainCategoryCache = FName{ CategoryNames[0] };
-			const_cast<FBuildLayerData*>(LayerData)->SubCategoryCache = CategoryNames.Num() > 1 ? FName{ CategoryNames[1] } : NAME_None;
-		}
-
-		BuildLayerDataMapCache.Add(*BuildableClassHash, LayerData);
-	}
-
-    CARTO_LOG("BuildLayerDataCache Filled. Count: %d", BuildLayerDataMapCache.Num());
-}
-
-
-void UCartographGameInstanceModule::OnBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos)
-{
-	if (AddedBuildingData.VisualBoxCache.bIsValid)
-	{
-		CurrentBuildingQuadTree.Insert(BuildingDataIndexRedirector.Num(), AddedBuildingData.VisualBoxCache);
-		for (int32& Index : BuildingDataIndexRedirector)
-		{
-			if (Index >= Pos)
-			{
-				Index++;
-			}
-		}
-		BuildingDataIndexRedirector.Add(Pos);
-	}
-
-	BuildingCountMap.FindOrAdd(AddedBuildingData.BuildableClassHash)++;
-}
-
-
-void UCartographGameInstanceModule::OnBuildingDataRemove(const FBuildingData& RemovedBuildingData, int32 Pos)
-{
-	if (RemovedBuildingData.VisualBoxCache.bIsValid)
-	{
-		const int32 Num = BuildingDataIndexRedirector.Num();
-		for (int32 i = 0; i < Num; i++)
-		{
-			int32& BuildingDataArrayIndex = BuildingDataIndexRedirector[i];
-			if (BuildingDataArrayIndex == Pos)
-			{
-				CurrentBuildingQuadTree.Remove(i, RemovedBuildingData.VisualBoxCache);
-				BuildingDataArrayIndex = -1;
-			}
-			else if (BuildingDataArrayIndex > Pos)
-			{
-				BuildingDataArrayIndex--;
-			}
-		}
-	}
-
-	BuildingCountMap.FindChecked(RemovedBuildingData.BuildableClassHash)--;
-}
-
-
-void UCartographGameInstanceModule::OnCartographMenuButtonClicked(UUserWidget* Widget, bool IsOpen)
-{
-	for (UWidget* ChildWidget : Widget->GetParent()->GetParent()->GetAllChildren())
-	{
-		if (ChildWidget->GetName() == "CartographMenu")
-		{
-			ChildWidget->SetVisibility(IsOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
-			break;
-		}
-	}
-
-	if (IsOpen)
-	{
-		auto* RootWidget = Cast<UWidget>(Widget->GetParent()->GetOuter()->GetOuter());
-        CARTO_LOG_ERROR_RETURN_IF_NULL(RootWidget);
-		FOutputDeviceNull Ar;
-		RootWidget->CallFunctionByNameWithArguments(TEXT("SetFiltersCollapsed 1"), Ar, nullptr, true);
-	}
-}
-
-
-void UCartographGameInstanceModule::OnShowBuildingsCheckboxChanged(bool DoShow)
-{
-    DoShowBuildings = DoShow;
-    CARTO_LOG("DoShowBuildings: %d", DoShowBuildings);
-}
-
-
-TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
-{
-	TArray<FString> Options;
-	for (const FLayerCategoryData& LayerCategory : LayerCategories)
-	{
-		Options.Add(LayerCategory.Name.ToString());
-
-		for (const FLayerSubCategoryData& LayerSubCategory : LayerCategory.SubCategories)
-		{
-			Options.Add(FString::Printf(TEXT("%s/%s"), *LayerCategory.Name.ToString(), *LayerSubCategory.Name.ToString()));
-		}
-	}
-	return Options;
-}
-
-
-void UCartographGameInstanceModule::OnVanillaMapMenuShown(const UUserWidget* Widget) const
-{
-	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
-	CARTO_LOG_ERROR_RETURN_IF_NULL(Menu);
-	Menu->SetVisibility(ESlateVisibility::Collapsed);
-
-	UWidget* Button = Widget->WidgetTree->FindWidget("CartographMenuShowHideButton");
-	CARTO_LOG_ERROR_RETURN_IF_NULL(Button);
-
-	FProperty* IsOpenProperty = Button->GetClass()->FindPropertyByName("IsOpen");
-	CARTO_LOG_ERROR_RETURN_IF_NULL(IsOpenProperty);
-	*IsOpenProperty->ContainerPtrToValuePtr<bool>(Button) = false;
-
-	FOutputDeviceNull Ar;
-	Button->CallFunctionByNameWithArguments(TEXT("SetShowHideText"), Ar, nullptr, true);
-}
-#pragma endregion
 
 
 void UCartographGameInstanceModule::GatherBuildables()
@@ -1358,10 +663,11 @@ void UCartographGameInstanceModule::GatherBuildables()
 		}
 
 		const uint32 Hash = TextKeyUtil::HashString(AssetPath.ToString());
-		ClassPtrToClassIDMap.Add(Class, Hash);
-		ClassIDToClassPtrMap.Add(Hash, Class);
+		ClassPtrToClassIDMap.Add(Class.Get(), Hash);
+		ClassIDToClassPtrMap.Add(Hash, Class.Get());
 		CARTO_LOG_DEBUG("Path: %s, Class: %s, Hash: %u", *AssetPath.ToString(), *Name, Hash);
 	}
+
 	for (const FTopLevelAssetPath& AssetPath : GetDerivedClassPaths(UFGBuildingDescriptor::StaticClass()))
 	{
 		const TSubclassOf<UFGBuildingDescriptor> Descriptor = StaticLoadClass(UFGBuildingDescriptor::StaticClass(), nullptr, *AssetPath.ToString());
@@ -1426,6 +732,329 @@ void UCartographGameInstanceModule::GatherBuildables()
 }
 
 
+void UCartographGameInstanceModule::GatherModOverrides()
+{
+	TArray<FAssetData> OverrideAssetArray;
+	const FName OverrideDataFileName{ "CartographOverrideData" };
+
+	TBaseStructure<FVector>::Get();
+	TBaseStructure<FCategoryData>::Get();
+
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	IAssetRegistry::Get()->EnumerateAssets(Filter,
+										   [&OverrideAssetArray, &OverrideDataFileName](const FAssetData& Asset)
+										   {
+											   if (Asset.AssetName == OverrideDataFileName)
+											   {
+												   OverrideAssetArray.Add(Asset);
+											   }
+
+											   return true;
+										   });
+
+#define VAR(x) std::make_pair(std::ref(x), FName{ #x })
+	const auto OverrideableVariables = std::make_tuple(
+		VAR(BuildCategoryDataMap), VAR(BuildableBuildCategoryDataOverrideMap), VAR(MaterialBuildCategoryDataOverrideMap),
+		VAR(BuildableIconOverrideMap), VAR(BuildableSizeOverrideMap), VAR(BuildableExtraRotationMap),
+		VAR(BuildableSplineDataMap), VAR(BuildableWireDataMap),
+		VAR(BuildableClassRedirectMap), VAR(BuildableToIgnore),
+		/*VAR(LayerCategories),*/ VAR(BuildLayerDataMap), VAR(BuildableBuildLayerDataOverrideMap), VAR(MaterialBuildLayerDataOverrideMap));
+#undef VAR
+
+
+	for (const FAssetData& OverrideAssetData : OverrideAssetArray)
+	{
+		CARTO_LOG("Override Data Found: %s", *OverrideAssetData.PackageName.ToString());
+
+		const FString OverrideDataClassName = OverrideAssetData.GetObjectPathString() + TEXT("_C");
+		UClass* OverrideDataClass = LoadObject<UClass>(nullptr, *OverrideDataClassName);
+		CARTO_LOG_ERROR_CONTINUE_IF_NULL(OverrideDataClass);
+
+		const auto LambdaProcessOverrideData =
+			[this, OverrideDataClass, &OverrideableVariables]<size_t Index>()
+		{
+			auto& [VariableRef, Name] = std::get<Index>(OverrideableVariables);
+			ProcessOverrideData(VariableRef, OverrideDataClass, Name);
+		};
+
+		[&LambdaProcessOverrideData]<size_t ...Index>(std::index_sequence<Index...>)
+		{
+			(LambdaProcessOverrideData.template operator()<Index>(), ...);
+		}(std::make_index_sequence<std::tuple_size_v<decltype(OverrideableVariables)>>{});
+		ProcessLayerCategoriesOverride(OverrideDataClass);
+	}
+}
+
+void UCartographGameInstanceModule::FlattenMaterialData()
+{
+	for (const auto& [Material, CategoryData] : MaterialBuildCategoryDataOverrideMap)
+	{
+		for (const auto& [_, Recipe] : GetMutableDefault<UFGFactoryCustomizationDescriptor_Material>(Material.LoadSynchronous())->GetBuildableMap())
+		{
+			TSubclassOf<AFGBuildable> Buildable = GetDefault<UFGBuildingDescriptor>(UFGRecipe::GetDescriptorForRecipe(Recipe))->mBuildableClass;
+			if (!BuildableBuildCategoryDataOverrideMap.Contains(Buildable.Get()))
+			{
+				BuildableBuildCategoryDataOverrideMap.Add(Buildable.Get(), CategoryData);
+			}
+		}
+	}
+
+	for (const auto& [Material, LayerData] : MaterialBuildLayerDataOverrideMap)
+	{
+		for (const auto& [_, Recipe] : GetMutableDefault<UFGFactoryCustomizationDescriptor_Material>(Material.LoadSynchronous())->GetBuildableMap())
+		{
+			TSubclassOf<AFGBuildable> Buildable = GetDefault<UFGBuildingDescriptor>(UFGRecipe::GetDescriptorForRecipe(Recipe))->mBuildableClass;
+			if (!BuildableBuildLayerDataOverrideMap.Contains(Buildable.Get()))
+			{
+				BuildableBuildLayerDataOverrideMap.Add(Buildable.Get(), LayerData);
+			}
+		}
+	}
+}
+
+
+void UCartographGameInstanceModule::FillBuildLayerDataCache()
+{
+	if (!BuildLayerDataMapCache.IsEmpty())
+	{
+		return;
+	}
+
+	for (const auto& [OriginalBuildableClass, _] : ClassPtrToClassIDMap)
+	{
+		if (!OriginalBuildableClass || BuildableToIgnore.Contains(OriginalBuildableClass.Get()))
+		{
+			continue;
+		}
+
+		const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
+		const TSoftClassPtr<AFGBuildable> BuildableClass = RedirectClass ? *RedirectClass : OriginalBuildableClass;
+
+		const uint32* BuildableClassHash = ClassPtrToClassIDMap.Find(BuildableClass);
+		if (!BuildableClassHash)
+		{
+			CARTO_LOG_ERROR("Can't find hash for %s", *BuildableClass->GetName());
+			continue;
+		}
+
+
+		const FBuildLayerData* LayerData = GetDataByBuildableClass(BuildableBuildLayerDataOverrideMap, BuildLayerDataMap, BuildableClass);
+		if (!LayerData && ModdedBuildings.Contains(BuildableClass.Get()))
+		{
+			const FString& ModName = *ModdedBuildings.Find(BuildableClass.Get());
+			LayerData = ModdedBuildLayerData.Find(ModName);
+		}
+		if (!LayerData)
+		{
+			CARTO_LOG_WARNING("Can't find layer data for %s", *BuildableClass->GetName());
+			continue;
+		}
+
+		if (LayerData->MainCategoryCache.IsNone())
+		{
+			TArray<FString> CategoryNames;
+			LayerData->Category.ParseIntoArray(CategoryNames, TEXT("/"));
+			if (CategoryNames.Num() == 0)
+			{
+				CARTO_LOG_ERROR("Invalid Category: %s", *LayerData->Category);
+				continue;
+			}
+
+			const_cast<FBuildLayerData*>(LayerData)->MainCategoryCache = FName{ CategoryNames[0] };
+			const_cast<FBuildLayerData*>(LayerData)->SubCategoryCache = CategoryNames.Num() > 1 ? FName{ CategoryNames[1] } : NAME_None;
+		}
+
+		BuildLayerDataMapCache.Add(*BuildableClassHash, LayerData);
+	}
+
+	CARTO_LOG("BuildLayerDataCache Filled. Count: %d", BuildLayerDataMapCache.Num());
+}
+
+
+void UCartographGameInstanceModule::InstallHooks()
+{
+	if (WITH_EDITOR)
+	{
+		return;
+	}
+
+	const auto LambdaAfterAddBuildable =
+		[](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
+		{
+			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+			{
+				BuildingDataSubsystem->OnAddBuildable(Buildable);
+			}
+		};
+	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, AddBuildable, LambdaAfterAddBuildable);
+
+	const auto LambdaAfterAddFromBuildableInstanceData =
+		[](int32 ReturnValue, AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass,
+		   FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData = false, int32 SaveDataBuildableIndex = INDEX_NONE,
+		   uint16 ConstructId = MAX_uint16, AActor* BuildEffectInstigator = nullptr, int32 BlueprintBuildEffectIndex = INDEX_NONE)
+		{
+			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+			{
+				BuildingDataSubsystem->OnAddFromBuildableInstanceData(BuildableClass, BuildableInstanceData, FromSaveData);
+			}
+		};
+	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromBuildableInstanceData, LambdaAfterAddFromBuildableInstanceData);
+
+	const auto LambdaAfterAddFromReplicatedData =
+		[](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, TSubclassOf<UFGRecipe> BuiltWithRecipe,
+		   const FLightweightBuildableReplicationItem& ReplicationData, int32 MaxSize,
+		   AActor* BuildEffectInstigator, int32 BlueprintBuildIndex)
+		{
+			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+			{
+				BuildingDataSubsystem->OnAddFromReplicatedData(BuildableClass, ReplicationData);
+			}
+		};
+	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromReplicatedData, LambdaAfterAddFromReplicatedData);
+
+	const auto LambdaAfterRemoveBuildable =
+		[](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
+		{
+			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+			{
+				BuildingDataSubsystem->OnRemoveBuildable(Buildable);
+			}
+		};
+	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, RemoveBuildable, LambdaAfterRemoveBuildable);
+
+	const auto LambdaAfterInvalidateRuntimeInstanceDataForIndex =
+		[](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, int32 Index)
+		{
+			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+			{
+				BuildingDataSubsystem->OnInvalidateRuntimeInstanceDataForIndex(ClassInstance, BuildableClass, Index);
+			}
+		};
+	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, InvalidateRuntimeInstanceDataForIndex, LambdaAfterInvalidateRuntimeInstanceDataForIndex);
+}
+
+
+void UCartographGameInstanceModule::LoadRuntimeConfig()
+{
+#if !UE_SERVER
+	const FCartograph_ConfigStruct ConfigInstance = FCartograph_ConfigStruct::GetActiveConfig(GetWorld());
+
+	RuntimeConfig = {};
+
+	// std::getline doesn't support std::string_view :(
+	{
+		std::wstringstream Stream{ *ConfigInstance.MainCategoryToggle };
+		std::wstring Line;
+		while (std::getline(Stream, Line, L','))
+		{
+			if (!Line.empty())
+			{
+				RuntimeConfig.DisabledLayerMainCategory.Add(FName{ Line.data() });
+			}
+		}
+	}
+	{
+		std::wstringstream Stream{ *ConfigInstance.SubCategoryToggle };
+		std::wstring MainCategoryLine;
+		while (std::getline(Stream, MainCategoryLine, L'|'))
+		{
+			const size_t MainCategoryColonIndex = MainCategoryLine.find(':');
+			if (MainCategoryColonIndex == std::wstring::npos)
+			{
+				CARTO_LOG_ERROR("Invalid BuildingToggle: %s", *ConfigInstance.BuildingToggle);
+				break;
+			}
+			std::wstring MainCategoryName = MainCategoryLine.substr(0, MainCategoryColonIndex);
+			const FName MainCategoryFName{ MainCategoryName.data() };
+
+			std::wstringstream SubCategoryStream{ MainCategoryLine.substr(MainCategoryColonIndex + 1) };
+			std::wstring SubCategoryLine;
+			while (std::getline(SubCategoryStream, SubCategoryLine, L','))
+			{
+				if (!SubCategoryLine.empty())
+				{
+					RuntimeConfig.DisabledLayerSubCategory.FindOrAdd(MainCategoryFName).Add(FName{ SubCategoryLine.data() });
+				}
+			}
+		}
+	}
+
+	{
+		std::wstringstream Stream{ *ConfigInstance.BuildingToggle };
+		std::wstring Line;
+		while (std::getline(Stream, Line, L','))
+		{
+			if (!Line.empty())
+			{
+				RuntimeConfig.DisabledLayerBuildable.Add(std::stoul(Line));
+			}
+		}
+	}
+
+	CARTO_LOG_DEBUG("RuntimeConfig Loaded");
+#endif
+}
+
+
+void UCartographGameInstanceModule::SaveRuntimeConfig()
+{
+#if !UE_SERVER
+	const FConfigId ConfigId{ "Cartograph", "" };
+	const UConfigManager* ConfigManager = GetWorld()->GetGameInstance()->GetSubsystem<UConfigManager>();
+	const UConfigPropertySection* RootSection = ConfigManager->GetConfigurationRootSection(ConfigId);
+
+	{
+		const TObjectPtr<UConfigProperty>* MainCategoryProperty = RootSection->SectionProperties.Find("MainCategoryToggle");
+		CARTO_LOG_ERROR_RETURN_IF_NULL(MainCategoryProperty);
+		auto* MainCategoryStringProperty = Cast<UConfigPropertyString>(*MainCategoryProperty);
+		CARTO_LOG_ERROR_RETURN_IF_NULL(MainCategoryStringProperty);
+
+		TStringBuilder<500> Builder;
+		for (const FName& Name : RuntimeConfig.DisabledLayerMainCategory)
+		{
+			Builder.Appendf(TEXT("%s,"), *Name.ToString());
+		}
+		MainCategoryStringProperty->Value = Builder.ToString();
+		MainCategoryStringProperty->MarkDirty();
+	}
+	{
+		const TObjectPtr<UConfigProperty>* SubCategoryProperty = RootSection->SectionProperties.Find("SubCategoryToggle");
+		CARTO_LOG_ERROR_RETURN_IF_NULL(SubCategoryProperty);
+		auto* SubCategoryStringProperty = Cast<UConfigPropertyString>(*SubCategoryProperty);
+		CARTO_LOG_ERROR_RETURN_IF_NULL(SubCategoryStringProperty);
+		TStringBuilder<1000> Builder;
+		for (const auto& [MainCategory, SubCategories] : RuntimeConfig.DisabledLayerSubCategory)
+		{
+			Builder.Appendf(TEXT("%s:"), *MainCategory.ToString());
+			for (const FName& Name : SubCategories)
+			{
+				Builder.Appendf(TEXT("%s,"), *Name.ToString());
+			}
+			Builder.Append(TEXT("|"));
+		}
+		SubCategoryStringProperty->Value = Builder.ToString();
+		SubCategoryStringProperty->MarkDirty();
+	}
+	{
+		const TObjectPtr<UConfigProperty>* BuildingProperty = RootSection->SectionProperties.Find("BuildingToggle");
+		CARTO_LOG_ERROR_RETURN_IF_NULL(BuildingProperty);
+		auto* BuildingStringProperty = Cast<UConfigPropertyString>(*BuildingProperty);
+		CARTO_LOG_ERROR_RETURN_IF_NULL(BuildingStringProperty);
+		TStringBuilder<11 * 551> Builder;
+		for (const uint32& Hash : RuntimeConfig.DisabledLayerBuildable)
+		{
+			Builder.Appendf(TEXT("%u,"), Hash);
+		}
+		BuildingStringProperty->Value = Builder.ToString();
+		BuildingStringProperty->MarkDirty();
+	}
+
+	CARTO_LOG_DEBUG("RuntimeConfig Saved");
+#endif
+}
+
+
 template<typename T>
 concept HasStaticStruct = requires
 {
@@ -1467,7 +1096,7 @@ void UCartographGameInstanceModule::FillInMatchingProperties(const FProperty* St
 
 
 template<typename KeyType, typename ValueType>
-void UCartographGameInstanceModule::ProcessOverrideData(TMap<KeyType, ValueType>& MapToBeOverriden, UClass* OverrideDataClass, FName PropertyName)
+void UCartographGameInstanceModule::ProcessOverrideData(TMap<KeyType, ValueType>& MapToBeOverriden, UClass* OverrideDataClass, const FName& PropertyName)
 {
 	const FProperty* ThisProperty = GetClass()->FindPropertyByName(PropertyName);
 	CARTO_LOG_ERROR_RETURN_IF_NULL(ThisProperty);
@@ -1550,7 +1179,7 @@ void UCartographGameInstanceModule::ProcessOverrideData(TMap<KeyType, ValueType>
 
 
 template<typename T>
-void UCartographGameInstanceModule::ProcessOverrideData(TSet<T>& SetToBeOverriden, UClass* OverrideDataClass, FName PropertyName)
+void UCartographGameInstanceModule::ProcessOverrideData(TSet<T>& SetToBeOverriden, UClass* OverrideDataClass, const FName& PropertyName)
 {
 	static_assert(!HasStaticStruct<T>, "Didn't bother to implement");
 
@@ -1702,78 +1331,19 @@ void UCartographGameInstanceModule::ProcessLayerCategoriesOverride(UClass* Overr
 }
 
 
-void UCartographGameInstanceModule::GatherModOverrides()
+TArray<FString> UCartographGameInstanceModule::GetLayerCategoryOptions() const
 {
-	TArray<FAssetData> OverrideAssetArray;
-	const FName OverrideDataFileName{ "CartographOverrideData" };
-
-	TBaseStructure<FVector>::Get();
-	TBaseStructure<FCategoryData>::Get();
-
-	FARFilter Filter;
-	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-	IAssetRegistry::Get()->EnumerateAssets(Filter,
-		[&OverrideAssetArray, &OverrideDataFileName](const FAssetData& Asset)
-		{
-			if (Asset.AssetName == OverrideDataFileName)
-			{
-				OverrideAssetArray.Add(Asset);
-			}
-
-			return true;
-		});
-
-#define VAR(x) std::make_pair(std::ref(x), FName{ #x })
-	const auto OverrideableVariables = std::make_tuple(
-		VAR(BuildCategoryDataMap), VAR(BuildableBuildCategoryDataOverrideMap), VAR(MaterialBuildCategoryDataOverrideMap),
-		VAR(BuildableIconOverrideMap), VAR(BuildableSizeOverrideMap), VAR(BuildableExtraRotationMap),
-		VAR(BuildableSplineDataMap), VAR(BuildableWireDataMap),
-		VAR(BuildableClassRedirectMap), VAR(BuildableToIgnore),
-		/*VAR(LayerCategories),*/ VAR(BuildLayerDataMap), VAR(BuildableBuildLayerDataOverrideMap), VAR(MaterialBuildLayerDataOverrideMap));
-#undef VAR
-
-
-	for (const FAssetData& OverrideAssetData : OverrideAssetArray)
+	TArray<FString> Options;
+	for (const FLayerCategoryData& LayerCategory : LayerCategories)
 	{
-		CARTO_LOG("Override Data Found: %s", *OverrideAssetData.PackageName.ToString());
+		Options.Add(LayerCategory.Name.ToString());
 
-		const FString OverrideDataClassName = OverrideAssetData.GetObjectPathString() + TEXT("_C");
-		UClass* OverrideDataClass = LoadObject<UClass>(nullptr, *OverrideDataClassName);
-		CARTO_LOG_ERROR_CONTINUE_IF_NULL(OverrideDataClass);
-
-		const auto LambdaProcessOverrideData =
-			[this, OverrideDataClass, &OverrideableVariables]<size_t Index>()
-			{
-				auto& [VariableRef, Name] = std::get<Index>(OverrideableVariables);
-				ProcessOverrideData(VariableRef, OverrideDataClass, Name);
-			};
-
-		[&LambdaProcessOverrideData]<size_t ...Index>(std::index_sequence<Index...>)
+		for (const FLayerSubCategoryData& LayerSubCategory : LayerCategory.SubCategories)
 		{
-			(LambdaProcessOverrideData.template operator()<Index>(), ...);
-		}(std::make_index_sequence<std::tuple_size_v<decltype(OverrideableVariables)>>{});
-		ProcessLayerCategoriesOverride(OverrideDataClass);
+			Options.Add(FString::Printf(TEXT("%s/%s"), *LayerCategory.Name.ToString(), *LayerSubCategory.Name.ToString()));
+		}
 	}
-}
-
-
-TSet<FTopLevelAssetPath> UCartographGameInstanceModule::GetDerivedClassPaths(UClass* ParentClass)
-{
-	TArray<UClass*> NativeRootClasses;
-	NativeRootClasses.Add(ParentClass);
-	GetDerivedClasses(ParentClass, NativeRootClasses);
-
-	TArray<FTopLevelAssetPath> NativeRootClassPaths;
-
-	Algo::TransformIf(NativeRootClasses,
-		NativeRootClassPaths,
-		[](const UClass* RootClass) { return RootClass && RootClass->HasAnyClassFlags(CLASS_Native); },
-		&UClass::GetClassPathName);
-
-	TSet<FTopLevelAssetPath> AllClassPaths;
-	IAssetRegistry::Get()->GetDerivedClassNames(NativeRootClassPaths, {}, AllClassPaths);
-
-	return AllClassPaths;
+	return Options;
 }
 
 

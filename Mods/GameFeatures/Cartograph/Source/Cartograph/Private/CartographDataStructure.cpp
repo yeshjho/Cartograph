@@ -2,33 +2,22 @@
 
 #include "Engine/InheritableComponentHandler.h"
 
-#include "Buildables/FGBuildable.h"
 #include "FGBuildableBeam.h"
-#include "Buildables/FGBuildableWire.h"
 #include "FGSplineBuildableInterface.h"
+#include "Buildables/FGBuildable.h"
+#include "Buildables/FGBuildableWire.h"
 
 #include "CartographGameInstanceModule.h"
 #include "Util/QuantizedVector2DSerialization.h"
 
 
 // This is used for actual equality check while removing
-bool FBuildingData::operator==(const FBuildingData& Other) const noexcept
+bool FBuildingData::operator==(const FBuildingData& Other) const
 {
-	return BuildableClassHash == Other.BuildableClassHash && Transform.Equals(Other.Transform) && BuildableExtraData == Other.BuildableExtraData;
-	// Ignoring CustomizationData on purpose
-}
-
-
-// This is used for sorting, so we only compare Z values
-std::partial_ordering FBuildingData::operator<=>(const FBuildingData& Other) const noexcept
-{
-	return Transform.GetLocation().Z <=> Other.Transform.GetLocation().Z;
-}
-
-
-std::partial_ordering FBuildingData::operator<=>(float Z) const noexcept
-{
-	return Transform.GetLocation().Z <=> Z;
+	return 
+		BuildableClassHash == Other.BuildableClassHash && 
+		Transform.Equals(Other.Transform) && 
+		BuildableExtraData == Other.BuildableExtraData;
 }
 
 
@@ -129,7 +118,7 @@ bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSucce
 		//FVector Scale = Transform.GetScale3D();
 		//bOutSuccess &= SerializePackedVector<1, 24>(Scale, Ar);
 	}
-	else
+	else  // Deserialize
 	{
 		FVector Location;
 		bOutSuccess &= SerializePackedVector<1, 24>(Location, Ar);
@@ -191,9 +180,9 @@ bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSucce
 	if (Ar.IsLoading())
 	{
 		VisualBoxCache = FBox2D{ ForceInit };
-		if (const TSubclassOf<AFGBuildable>* Class = UCartographGameInstanceModule::Instance->ClassIDToClassPtrMap.Find(BuildableClassHash))
+		if (const TSoftClassPtr<AFGBuildable>* Class = UCartographGameInstanceModule::Instance->ClassIDToClassPtrMap.Find(BuildableClassHash))
 		{
-			FillInCache(*Class);
+			FillInCache(Class->LoadSynchronous());
 		}
 		else
 		{
@@ -212,7 +201,7 @@ void FBuildingData::AddExtraData(AFGBuildable* Buildable)
 
 	const TSoftClassPtr<AFGBuildable> Class = Buildable->GetClass();
 	const TSoftClassPtr<AFGBuildable>* RedirectClass = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap.Find(Class);
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->Get() : Class.Get();
+	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : Class.LoadSynchronous();
 
 	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
 	{
@@ -271,7 +260,7 @@ void FBuildingData::FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildab
 	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
 	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
 
-	const uint32* ClassID = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass);
+	const uint32* ClassID = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass.Get());
 	if (!ClassID)
 	{
 		CARTO_LOG_ERROR("Can't find hash for %s", *BuildableClass->GetName());
@@ -454,7 +443,7 @@ void FBuildingData::FillInHash(const TSubclassOf<AFGBuildable>& OriginalBuildabl
 	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
 	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
 
-	if (const uint32* Hash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass))
+	if (const uint32* Hash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass.Get()))
 	{
 		BuildableClassHash = *Hash;
 	}

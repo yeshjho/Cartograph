@@ -7,6 +7,7 @@
 
 
 class AFGBuildable;
+class UTexture2D;
 struct FFGDynamicStruct;
 
 
@@ -14,7 +15,7 @@ struct FSplineExtraData
 {
 	TArray<FVector2D> Points;
 
-	bool operator==(const FSplineExtraData& Other) const noexcept = default;
+	bool operator==(const FSplineExtraData& Other) const = default;
 };
 
 
@@ -22,38 +23,34 @@ struct FWireExtraData
 {
 	FVector2D End;
 
-	bool operator==(const FWireExtraData& Other) const noexcept = default;
+	bool operator==(const FWireExtraData& Other) const = default;
 };
 
 
 struct FBeamExtraData
 {
-	float Length;
+	float Length = 0.f;
 
-	bool operator==(const FBeamExtraData& Other) const noexcept = default;
+	bool operator==(const FBeamExtraData& Other) const = default;
 };
 
 
-enum class EBuildingDataType
+enum class EBuildingDataType : uint8
 {
 	Invalid = 0,
 
-	Icon = 1 << 0,
-	Rectangle = 1 << 1,
-	Spline = 1 << 2,
-	Wire = 1 << 3,
-	Beam = 1 << 4,
-
-	Normal = Icon | Rectangle,
-	Special = Spline | Wire | Beam,
+	Icon,
+	Rectangle,
+	Spline,
+	Wire,
+	Beam,
 };
-ENUM_CLASS_FLAGS(EBuildingDataType)
 
 
 struct FRectangleDataCache
 {
-	const struct FCategoryData* CategoryData;
-	FVector Corners[4];
+	const struct FCategoryData* CategoryData = nullptr;
+	FVector Corners[4]{};
 };
 
 
@@ -68,7 +65,7 @@ struct FNormalDataCache
 
 struct FSplineDataCache
 {
-	const struct FSplineData* SplineData;
+	const struct FSplineData* SplineData = nullptr;
 };
 
 
@@ -77,10 +74,12 @@ struct FBuildingData
 {
 	GENERATED_BODY()
 
+#pragma region("Serialized")
 	uint32 BuildableClassHash = 0;
 	FTransform Transform;
 	//FFactoryCustomizationData CustomizationData;
 	std::variant<std::monostate, FSplineExtraData, FWireExtraData, FBeamExtraData> BuildableExtraData;
+#pragma endregion
 
 
 	EBuildingDataType DataType = EBuildingDataType::Invalid;
@@ -91,9 +90,7 @@ struct FBuildingData
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
-	bool operator==(const FBuildingData& Other) const noexcept;
-	std::partial_ordering operator<=>(const FBuildingData& Other) const noexcept;
-	std::partial_ordering operator<=>(float Z) const noexcept;
+	bool operator==(const FBuildingData& Other) const;
 
 	void AddExtraData(AFGBuildable* Buildable);
 	void AddExtraData(const FFGDynamicStruct& TypeSpecificData);

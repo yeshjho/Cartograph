@@ -1,10 +1,11 @@
-#include "UI/CartographMenuLayerItemWidget.h"
+﻿#include "UI/CartographMenuLayerItemWidget.h"
 
+#include "CartographBuildingDataSubsystem.h"
 #include "CartographGameInstanceModule.h"
 
 
 void UCartographMenuLayerItemWidget::Initialize_Native(const FName& InLayerCategory, const FName& InLayerSubCategory,
-                                                       uint32 InClassHash, UTexture2D* Icon, const FText& InBuildingName)
+                                                       const uint32 InClassHash, UTexture2D* Icon, const FText& InBuildingName)
 {
     LayerCategory = InLayerCategory;
     LayerSubCategory = InLayerSubCategory;
@@ -17,11 +18,12 @@ void UCartographMenuLayerItemWidget::Initialize_Native(const FName& InLayerCateg
 
 bool UCartographMenuLayerItemWidget::ShouldBeVisible() const
 {
-    return GameInstanceModule->DoesBuildingExist(ClassHash);
+    const auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance;
+    return BuildingDataSubsystem && BuildingDataSubsystem->DoesBuildingExist(ClassHash);
 }
 
 
-void UCartographMenuLayerItemWidget::OnClicked(bool IsChecked) const
+void UCartographMenuLayerItemWidget::OnClicked(const bool IsChecked) const
 {
     if (!IsChecked)
     {

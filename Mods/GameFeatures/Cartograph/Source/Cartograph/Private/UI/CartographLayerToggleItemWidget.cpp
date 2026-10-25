@@ -1,6 +1,7 @@
 ﻿#include "UI/CartographLayerToggleItemWidget.h"
 
 #include "CartographGameInstanceModule.h"
+#include "CartographHelpers.h"
 #include "UI/CartographMenuLayerItemWidget.h"
 #include "UI/CartographMenuWidget.h"
 
@@ -13,7 +14,7 @@ void UCartographLayerToggleItemWidget::Initialize_Native(UCartographMenuWidget* 
 }
 
 
-void UCartographLayerToggleItemWidget::OnClicked(bool IsChecked) const
+void UCartographLayerToggleItemWidget::OnClicked(const bool IsChecked) const
 {
     if (SubCategory.IsNone())
     {
@@ -59,9 +60,10 @@ bool UCartographLayerToggleItemWidget::GetInitialStatus() const
 }
 
 
-void UCartographLayerToggleItemWidget::SelectOrDeselectAll(bool DoSelect)
+void UCartographLayerToggleItemWidget::SelectOrDeselectAll(const bool DoSelect)
 {
-    const auto LambdaProcessItems = [this, DoSelect](const TMap<FName, FMenuItem>& Items)
+    const auto LambdaProcessItems = 
+    	[this, DoSelect](const TMap<FName, FMenuItem>& Items)
         {
             for (const auto& [_, MenuItem] : Items)
             {
