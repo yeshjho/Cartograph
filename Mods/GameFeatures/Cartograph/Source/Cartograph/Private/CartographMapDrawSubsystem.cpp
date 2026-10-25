@@ -16,14 +16,26 @@ ACartographMapDrawSubsystem::ACartographMapDrawSubsystem()
 }
 
 
+void ACartographMapDrawSubsystem::MarkMapTextureDirty()
+{
+	if (IsMapBeingRendered)  // TODO: Update this variable
+	{
+		RedrawMap();
+	}
+	else
+	{
+		IsMapTextureDirty = true;
+	}
+}
+
+
 void ACartographMapDrawSubsystem::BeginPlay()
 {
 	Super::BeginPlay();
 
-    UKismetRenderingLibrary::ClearRenderTarget2D(this, RenderTarget, { 0, 0, 0, 0 });
-
     Instance = this;
 }
+
 
 void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
@@ -31,6 +43,7 @@ void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReas
 
 	Super::EndPlay(EndPlayReason);
 }
+
 
 void ACartographMapDrawSubsystem::OnZFilterUpdated(const float Min, const float Max)  // [0, 1]
 {
@@ -43,10 +56,7 @@ void ACartographMapDrawSubsystem::OnZFilterUpdated(const float Min, const float 
 
 	CARTO_LOG("Min is now %f and max is now %f", MinZFilter, MaxZFilter);
 
-	if (!IsInitializing)
-	{
-		RedrawMap();
-	}
+	MarkMapTextureDirty();
 }
 
 

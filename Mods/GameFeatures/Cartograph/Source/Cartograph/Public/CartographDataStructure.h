@@ -3,6 +3,8 @@
 
 #include <variant>
 
+#include "Net/Serialization/FastArraySerializer.h"
+
 #include "CartographDataStructure.generated.h"
 
 
@@ -70,7 +72,7 @@ struct FSplineDataCache
 
 
 USTRUCT()
-struct FBuildingData
+struct FBuildingData : public FFastArraySerializerItem
 {
 	GENERATED_BODY()
 
@@ -92,7 +94,7 @@ struct FBuildingData
 
 	bool operator==(const FBuildingData& Other) const;
 
-	void AddExtraData(AFGBuildable* Buildable);
+	void AddExtraData(const AFGBuildable* Buildable);
 	void AddExtraData(const FFGDynamicStruct& TypeSpecificData);
 
 	void FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data

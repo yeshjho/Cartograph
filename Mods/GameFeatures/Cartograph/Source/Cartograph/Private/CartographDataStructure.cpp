@@ -195,7 +195,7 @@ bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSucce
 }
 
 
-void FBuildingData::AddExtraData(AFGBuildable* Buildable)
+void FBuildingData::AddExtraData(const AFGBuildable* Buildable)
 {
 	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
 

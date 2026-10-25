@@ -20,11 +20,14 @@ class CARTOGRAPH_API ACartographMapDrawSubsystem : public AModSubsystem
 public:
 	ACartographMapDrawSubsystem();
 
-	void RedrawMap();
+	// Called when it's needed to recapture the map.
+	void MarkMapTextureDirty();
 
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	void RedrawMap();
 
 	UFUNCTION(BlueprintCallable)
 	void OnZFilterUpdated(float Min, float Max);
@@ -43,8 +46,13 @@ public:
 	inline static ACartographMapDrawSubsystem* Instance = nullptr;
 
 protected:
+	bool IsMapTextureDirty = true;
+
 	float MinZFilter = -std::numeric_limits<float>::max();
 	float MaxZFilter = std::numeric_limits<float>::max();
+
+	UPROPERTY(BlueprintReadWrite)
+	bool IsMapBeingRendered = false;
 
 	// For blueprint use only
 protected:

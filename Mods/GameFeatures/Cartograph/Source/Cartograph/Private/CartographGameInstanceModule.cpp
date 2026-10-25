@@ -61,6 +61,7 @@ void UCartographGameInstanceModule::DispatchLifecycleEvent(const ELifecyclePhase
 		GatherModOverrides();
 		FlattenMaterialData();
 		LoadRuntimeConfig();
+		InstallHooks();
 		break;
 	}
 }
@@ -72,7 +73,7 @@ void UCartographGameInstanceModule::OnLayerConfigChanged()
 
 	if (auto* MapDrawSubsystem = ACartographMapDrawSubsystem::Instance)
 	{
-		MapDrawSubsystem->RedrawMap();
+		MapDrawSubsystem->MarkMapTextureDirty();
 	}
 	SaveRuntimeConfig();
 }
