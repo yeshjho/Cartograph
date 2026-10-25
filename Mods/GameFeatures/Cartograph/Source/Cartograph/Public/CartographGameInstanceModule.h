@@ -10,8 +10,6 @@
 #include "FGBuildSubCategory.h"
 #include "FGLightweightBuildableSubsystem.h"
 
-#include "UE5Coro/UE5Coro.h"
-
 #include "CartographDataStructure.h"
 
 #include "CartographGameInstanceModule.generated.h"
