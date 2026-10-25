@@ -66,7 +66,7 @@ void UCartographLayerToggleItemWidget::SelectOrDeselectAll(bool DoSelect)
             for (const auto& [_, MenuItem] : Items)
             {
                 const auto* LayerItemWidget = Cast<UCartographMenuLayerItemWidget>(MenuItem.Widget);
-                CARTO_LOG_ERROR_RETURN_IF_NULL(LayerItemWidget);
+                CARTO_LOG_ERROR_CONTINUE_IF_NULL(LayerItemWidget);
 
                 if (LayerItemWidget->GetVisibility() == ESlateVisibility::Collapsed)
                 {

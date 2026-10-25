@@ -60,6 +60,7 @@ constexpr bool DRAW_BOUNDARIES = false;
 #define CARTO_LOG_ERROR_DO_IF_NULL(ptr, action) if (!ptr) { CARTO_LOG_ERROR("'%s' is null", TEXT(#ptr)); action; }
 #define CARTO_LOG_ERROR_RETURN_IF_NULL(ptr) CARTO_LOG_ERROR_DO_IF_NULL(ptr, return)
 #define CARTO_LOG_ERROR_BREAK_IF_NULL(ptr) CARTO_LOG_ERROR_DO_IF_NULL(ptr, break)
+#define CARTO_LOG_ERROR_CONTINUE_IF_NULL(ptr) CARTO_LOG_ERROR_DO_IF_NULL(ptr, continue)
 
 
 USTRUCT()

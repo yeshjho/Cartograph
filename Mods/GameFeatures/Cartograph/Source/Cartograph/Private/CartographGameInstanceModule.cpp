@@ -394,7 +394,7 @@ void UCartographGameInstanceModule::OnWorldLoaded(UWorld* World)
 					[](AFGBuildable* Buildable) { return Buildable; });
 				Coroutine = InitialBuildableGather(
 					std::move(Factories),
-					AFGLightweightBuildableSubsystem::Get(World)->mBuildableClassToInstanceArray
+					AFGLightweightBuildableSubsystem::Get(World)->GetAllLightweightBuildableInstances()
 				);
 			});
 	}
@@ -1338,7 +1338,7 @@ void UCartographGameInstanceModule::GatherBuildables()
 			ModdedBuildings.Add(Class.Get(), ModName);
 			FLayerCategoryData* ModdedCategory = LayerCategories.FindByPredicate(
 				[](const FLayerCategoryData& CategoryData) { return CategoryData.Name == UnspecifiedMainCategory; });
-			CARTO_LOG_ERROR_DO_IF_NULL(ModdedCategory, continue);
+			CARTO_LOG_ERROR_CONTINUE_IF_NULL(ModdedCategory);
             if (!ModdedCategory->SubCategories.FindByPredicate(
 				[ModFName = FName{ ModName }](const FLayerSubCategoryData& CategoryData) { return CategoryData.Name == ModFName; }))
             {
@@ -1380,7 +1380,7 @@ void UCartographGameInstanceModule::GatherBuildables()
 		}
 
 		const auto* DescriptorInstance = GetDefault<UFGBuildingDescriptor>(Descriptor);
-		CARTO_LOG_ERROR_DO_IF_NULL(DescriptorInstance, continue);
+		CARTO_LOG_ERROR_CONTINUE_IF_NULL(DescriptorInstance);
 		TSubclassOf<AFGBuildable> BuildableClass = DescriptorInstance->mBuildableClass;
 		if (!BuildableClass)
 		{
@@ -1739,7 +1739,7 @@ void UCartographGameInstanceModule::GatherModOverrides()
 
 		const FString OverrideDataClassName = OverrideAssetData.GetObjectPathString() + TEXT("_C");
 		UClass* OverrideDataClass = LoadObject<UClass>(nullptr, *OverrideDataClassName);
-		CARTO_LOG_ERROR_DO_IF_NULL(OverrideDataClass, continue);
+		CARTO_LOG_ERROR_CONTINUE_IF_NULL(OverrideDataClass);
 
 		const auto LambdaProcessOverrideData =
 			[this, OverrideDataClass, &OverrideableVariables]<size_t Index>()
