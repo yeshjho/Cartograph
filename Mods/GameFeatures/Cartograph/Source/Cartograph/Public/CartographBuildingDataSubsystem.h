@@ -56,10 +56,10 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 
 	void OnAddBuildable(const AFGBuildable* Buildable);
-	void OnAddFromBuildableInstanceData(const TSubclassOf<AFGBuildable>& BuildableClass, const FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData);
-	void OnAddFromReplicatedData(const TSubclassOf<AFGBuildable>& BuildableClass, const FLightweightBuildableReplicationItem& ReplicationData);
+	void OnAddFromBuildableInstanceData(const TSubclassOf<AFGBuildable>& BuildableClass, const FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData, int32 InstanceIndex);
+	void OnAddFromReplicatedData(const AFGLightweightBuildableSubsystem* ClassInstance, const TSubclassOf<AFGBuildable>& BuildableClass, const FLightweightBuildableReplicationItem& ReplicationData);
 	void OnRemoveBuildable(const AFGBuildable* Buildable);
-	void OnInvalidateRuntimeInstanceDataForIndex(const AFGLightweightBuildableSubsystem* ClassInstance, const TSubclassOf<AFGBuildable>& BuildableClass, int32 Index);
+	void OnInvalidateRuntimeInstanceDataForIndex(const TSubclassOf<AFGBuildable>& BuildableClass, int32 Index);
 
 	void OnBuildingDataInvalidated(const TSet<uint32>& InvalidatedTypes);
 	void OnBuildingDataInvalidated(uint32 InvalidatedType);
@@ -73,21 +73,28 @@ protected:
 	void GatherInitialBuildings();
 
 private:
-	template<typename T>
-	void AddBuilding(const T& Building, FTransform Transform, const TSubclassOf<AFGBuildable>& BuildableClass);
+	void AddBuildable(const AFGBuildable* Buildable);
+	void AddLightweightBuildable(const FFGDynamicStruct& TypeSpecificData, int32 InstanceIndex, const FTransform& Transform, const TSoftClassPtr<AFGBuildable>& BuildableClass);
+	void RemoveBuildingDuringRuntime(const TSoftClassPtr<AFGBuildable>& BuildableClass, uint32 ArrayIndex);
 
 
 public:
 	inline static ACartographBuildingDataSubsystem* Instance = nullptr;
-
-protected:
-	void OnBuildingDataAdd(const FBuildingData& AddedBuildingData, int32 Pos);
-	void OnBuildingDataRemove(const FBuildingData& RemovedBuildingData, int32 Pos);
 
 
 protected:
 	UPROPERTY(Replicated)
 	FBuildingDataArray BuildingDataArray;
 
+	TMap<TObjectKey<AFGBuildable>, uint32> BuildableToArrayIndex;  // Server-only
+	TMap<TSoftClassPtr<AFGBuildable>, TMap<int32, uint32>> LightweightBuildableToArrayIndex;  // Server-only
+
+	TMap<uint32, uint32> BuildingCountPerType;
 	TSet<uint32> DirtyTypes;
+
+protected:
+	UPROPERTY(BlueprintReadOnly)
+	float MinHeight = -100.f;
+	UPROPERTY(BlueprintReadOnly)
+	float MaxHeight = 100.f;
 };

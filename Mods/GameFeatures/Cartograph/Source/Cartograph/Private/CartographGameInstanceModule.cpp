@@ -37,6 +37,92 @@
 #define LOCTEXT_NAMESPACE "Cartograph"
 
 
+namespace
+{
+	void InstallHooks()
+	{
+		if (WITH_EDITOR)
+		{
+			return;
+		}
+
+		const auto LambdaAfterAddBuildable =
+			[](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
+			{
+				if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+				{
+					BuildingDataSubsystem->OnAddBuildable(Buildable);
+				}
+			};
+		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, AddBuildable, LambdaAfterAddBuildable);
+
+		const auto LambdaAfterAddFromBuildableInstanceData =
+			[](int32 ReturnValue, AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass,
+			   FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData = false, int32 SaveDataBuildableIndex = INDEX_NONE,
+			   uint16 ConstructId = MAX_uint16, AActor* BuildEffectInstigator = nullptr, int32 BlueprintBuildEffectIndex = INDEX_NONE)
+			{
+				if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+				{
+					BuildingDataSubsystem->OnAddFromBuildableInstanceData(BuildableClass, BuildableInstanceData, FromSaveData, ReturnValue);
+				}
+			};
+		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromBuildableInstanceData, LambdaAfterAddFromBuildableInstanceData);
+
+		const auto LambdaAfterAddFromReplicatedData =
+			[](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, TSubclassOf<UFGRecipe> BuiltWithRecipe,
+			   const FLightweightBuildableReplicationItem& ReplicationData, int32 MaxSize,
+			   AActor* BuildEffectInstigator, int32 BlueprintBuildIndex)
+			{
+				if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+				{
+					BuildingDataSubsystem->OnAddFromReplicatedData(ClassInstance, BuildableClass, ReplicationData);
+				}
+			};
+		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromReplicatedData, LambdaAfterAddFromReplicatedData);
+
+		const auto LambdaAfterRemoveBuildable =
+			[](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
+			{
+				if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+				{
+					BuildingDataSubsystem->OnRemoveBuildable(Buildable);
+				}
+			};
+		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, RemoveBuildable, LambdaAfterRemoveBuildable);
+
+		const auto LambdaAfterInvalidateRuntimeInstanceDataForIndex =
+			[](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, int32 Index)
+			{
+				if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
+				{
+					BuildingDataSubsystem->OnInvalidateRuntimeInstanceDataForIndex(BuildableClass, Index);
+				}
+			};
+		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, InvalidateRuntimeInstanceDataForIndex, LambdaAfterInvalidateRuntimeInstanceDataForIndex);
+	}
+
+
+	TSet<FTopLevelAssetPath> GetDerivedClassPaths(UClass* ParentClass)
+	{
+		TArray<UClass*> NativeRootClasses;
+		NativeRootClasses.Add(ParentClass);
+		GetDerivedClasses(ParentClass, NativeRootClasses);
+
+		TArray<FTopLevelAssetPath> NativeRootClassPaths;
+
+		Algo::TransformIf(NativeRootClasses,
+						  NativeRootClassPaths,
+						  [](const UClass* RootClass) { return RootClass && RootClass->HasAnyClassFlags(CLASS_Native); },
+						  &UClass::GetClassPathName);
+
+		TSet<FTopLevelAssetPath> AllClassPaths;
+		IAssetRegistry::Get()->GetDerivedClassNames(NativeRootClassPaths, {}, AllClassPaths);
+
+		return AllClassPaths;
+	}
+}
+
+
 void UCartographGameInstanceModule::DispatchLifecycleEvent(const ELifecyclePhase Phase)
 {
 	Super::DispatchLifecycleEvent(Phase);
@@ -594,26 +680,6 @@ void UCartographGameInstanceModule::RegisterMenuButton() const
 }
 
 
-TSet<FTopLevelAssetPath> UCartographGameInstanceModule::GetDerivedClassPaths(UClass* ParentClass)
-{
-	TArray<UClass*> NativeRootClasses;
-	NativeRootClasses.Add(ParentClass);
-	GetDerivedClasses(ParentClass, NativeRootClasses);
-
-	TArray<FTopLevelAssetPath> NativeRootClassPaths;
-
-	Algo::TransformIf(NativeRootClasses,
-					  NativeRootClassPaths,
-					  [](const UClass* RootClass) { return RootClass && RootClass->HasAnyClassFlags(CLASS_Native); },
-					  &UClass::GetClassPathName);
-
-	TSet<FTopLevelAssetPath> AllClassPaths;
-	IAssetRegistry::Get()->GetDerivedClassNames(NativeRootClassPaths, {}, AllClassPaths);
-
-	return AllClassPaths;
-}
-
-
 void UCartographGameInstanceModule::GatherBuildables()
 {
     ClassIDToClassPtrMap.Empty();
@@ -871,70 +937,6 @@ void UCartographGameInstanceModule::FillBuildLayerDataCache()
 
 	CARTO_LOG("BuildLayerDataCache Filled. Count: %d", BuildLayerDataMapCache.Num());
 }
-
-
-void UCartographGameInstanceModule::InstallHooks()
-{
-	if (WITH_EDITOR)
-	{
-		return;
-	}
-
-	const auto LambdaAfterAddBuildable =
-		[](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
-		{
-			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
-			{
-				BuildingDataSubsystem->OnAddBuildable(Buildable);
-			}
-		};
-	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, AddBuildable, LambdaAfterAddBuildable);
-
-	const auto LambdaAfterAddFromBuildableInstanceData =
-		[](int32 ReturnValue, AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass,
-		   FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData = false, int32 SaveDataBuildableIndex = INDEX_NONE,
-		   uint16 ConstructId = MAX_uint16, AActor* BuildEffectInstigator = nullptr, int32 BlueprintBuildEffectIndex = INDEX_NONE)
-		{
-			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
-			{
-				BuildingDataSubsystem->OnAddFromBuildableInstanceData(BuildableClass, BuildableInstanceData, FromSaveData);
-			}
-		};
-	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromBuildableInstanceData, LambdaAfterAddFromBuildableInstanceData);
-
-	const auto LambdaAfterAddFromReplicatedData =
-		[](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, TSubclassOf<UFGRecipe> BuiltWithRecipe,
-		   const FLightweightBuildableReplicationItem& ReplicationData, int32 MaxSize,
-		   AActor* BuildEffectInstigator, int32 BlueprintBuildIndex)
-		{
-			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
-			{
-				BuildingDataSubsystem->OnAddFromReplicatedData(BuildableClass, ReplicationData);
-			}
-		};
-	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, AddFromReplicatedData, LambdaAfterAddFromReplicatedData);
-
-	const auto LambdaAfterRemoveBuildable =
-		[](AFGBuildableSubsystem* ClassInstance, AFGBuildable* Buildable)
-		{
-			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
-			{
-				BuildingDataSubsystem->OnRemoveBuildable(Buildable);
-			}
-		};
-	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGBuildableSubsystem, RemoveBuildable, LambdaAfterRemoveBuildable);
-
-	const auto LambdaAfterInvalidateRuntimeInstanceDataForIndex =
-		[](AFGLightweightBuildableSubsystem* ClassInstance, TSubclassOf<AFGBuildable> BuildableClass, int32 Index)
-		{
-			if (auto* BuildingDataSubsystem = ACartographBuildingDataSubsystem::Instance)
-			{
-				BuildingDataSubsystem->OnInvalidateRuntimeInstanceDataForIndex(ClassInstance, BuildableClass, Index);
-			}
-		};
-	SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, InvalidateRuntimeInstanceDataForIndex, LambdaAfterInvalidateRuntimeInstanceDataForIndex);
-}
-
 
 void UCartographGameInstanceModule::LoadRuntimeConfig()
 {

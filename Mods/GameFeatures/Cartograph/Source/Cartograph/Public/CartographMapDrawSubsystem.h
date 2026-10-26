@@ -56,11 +56,6 @@ protected:
 
 	// For blueprint use only
 protected:
-	UPROPERTY(BlueprintReadOnly)
-	float MinHeight = -100;
-	UPROPERTY(BlueprintReadOnly)
-	float MaxHeight = 100;
-
 	float MinCached = 0.f;
 	float MaxCached = 1.f;
 

@@ -11,16 +11,6 @@
 #include "Util/QuantizedVector2DSerialization.h"
 
 
-// This is used for actual equality check while removing
-bool FBuildingData::operator==(const FBuildingData& Other) const
-{
-	return 
-		BuildableClassHash == Other.BuildableClassHash && 
-		Transform.Equals(Other.Transform) && 
-		BuildableExtraData == Other.BuildableExtraData;
-}
-
-
 FArchive& operator<<(FArchive& Ar, TArray<FVector2D>& A)
 {
 	A.CountBytes(Ar);
@@ -437,20 +427,7 @@ void FBuildingData::FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildab
 
 void FBuildingData::FillInHash(const TSubclassOf<AFGBuildable>& OriginalBuildableClass)
 {
-	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-
-	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
-
-	if (const uint32* Hash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass.Get()))
-	{
-		BuildableClassHash = *Hash;
-	}
-	else
-	{
-		CARTO_LOG_WARNING("Class %s not found in ClassPtrToClassIDMap", *BuildableClass->GetName());
-	}
+	BuildableClassHash = GetHash(OriginalBuildableClass.Get());
 }
 
 
@@ -551,7 +528,27 @@ void FBuildingData::FillInSplineVisualBoxCache()
 }
 
 
-FVector2D FBuildingData::GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass)
+uint32 FBuildingData::GetHash(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass)
+{
+	CARTO_LOG_ERROR_DO_IF_NULL(UCartographGameInstanceModule::Instance, return 0);
+
+	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
+	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
+	const TSoftClassPtr<AFGBuildable> BuildableClass = RedirectClass ? *RedirectClass : OriginalBuildableClass.Get();
+
+	if (const uint32* Hash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass.Get()))
+	{
+		return *Hash;
+	}
+	else
+	{
+		CARTO_LOG_WARNING("Class %s not found in ClassPtrToClassIDMap", *BuildableClass.LoadSynchronous()->GetName());
+		return 0;
+	}
+}
+
+
+FVector FBuildingData::GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass)
 {
 	if (!UCartographGameInstanceModule::Instance)
 	{

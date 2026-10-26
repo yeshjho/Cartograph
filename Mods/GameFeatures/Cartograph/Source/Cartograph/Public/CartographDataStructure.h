@@ -15,7 +15,7 @@ struct FFGDynamicStruct;
 
 struct FSplineExtraData
 {
-	TArray<FVector2D> Points;
+	TArray<FVector> Points;
 
 	bool operator==(const FSplineExtraData& Other) const = default;
 };
@@ -23,7 +23,7 @@ struct FSplineExtraData
 
 struct FWireExtraData
 {
-	FVector2D End;
+	FVector End;
 
 	bool operator==(const FWireExtraData& Other) const = default;
 };
@@ -41,15 +41,14 @@ enum class EBuildingDataType : uint8
 {
 	Invalid = 0,
 
-	Icon,
-	Rectangle,
+	Cuboid,
 	Spline,
 	Wire,
 	Beam,
 };
 
 
-struct FRectangleDataCache
+struct FCuboidDataCache
 {
 	const struct FCategoryData* CategoryData = nullptr;
 	FVector Corners[4]{};
@@ -58,10 +57,7 @@ struct FRectangleDataCache
 
 struct FNormalDataCache
 {
-	FVector2D ScreenPosition;
-	FVector2D Size;
-	FRotator Rotation;
-	std::variant<TSoftObjectPtr<UTexture2D>, FRectangleDataCache> IconOrRectangleData;
+	FCuboidDataCache CuboidData;
 };
 
 
@@ -87,12 +83,10 @@ struct FBuildingData : public FFastArraySerializerItem
 	EBuildingDataType DataType = EBuildingDataType::Invalid;
 	std::variant<FNormalDataCache, FSplineDataCache, const struct FWireData*> DataCache;
 	const struct FBuildLayerData* LayerDataCache = nullptr;
-	FBox2D VisualBoxCache{ ForceInit };
+	FBox VisualBoxCache{ ForceInit };  // World
 
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
-
-	bool operator==(const FBuildingData& Other) const;
 
 	void AddExtraData(const AFGBuildable* Buildable);
 	void AddExtraData(const FFGDynamicStruct& TypeSpecificData);
@@ -104,7 +98,8 @@ struct FBuildingData : public FFastArraySerializerItem
 
     void FillInSplineVisualBoxCache();  // Call it after filling in the extra data & cache
 
-	static FVector2D GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass);
+	static uint32 GetHash(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
+	static FVector GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass);
 };
 
 

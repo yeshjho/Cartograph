@@ -148,13 +148,10 @@ public:
 private:
 	void RegisterMenuButton() const;
 
-	static TSet<FTopLevelAssetPath> GetDerivedClassPaths(UClass* ParentClass);
 	void GatherBuildables();
 	void GatherModOverrides();
 	void FlattenMaterialData();
 	void FillBuildLayerDataCache();
-
-	static void InstallHooks();
 
 	void LoadRuntimeConfig();
     void SaveRuntimeConfig();
