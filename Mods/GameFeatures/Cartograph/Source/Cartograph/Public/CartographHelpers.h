@@ -18,17 +18,15 @@ namespace Cartograph
 
     constexpr int RENDER_TEXTURE_SIZE = 1024 * 1;
 
-    constexpr double ORIGIN_UV[] = { -WEST_BOUND_CENTIMETERS / MAP_WIDTH_CENTIMETERS, -NORTH_BOUND_CENTIMETERS / MAP_HEIGHT_CENTIMETERS };
-    constexpr double PIXEL_PER_CENTIMETER[] = { RENDER_TEXTURE_SIZE / MAP_WIDTH_CENTIMETERS, RENDER_TEXTURE_SIZE / MAP_HEIGHT_CENTIMETERS };
-
     constexpr int SPLINE_SEGMENTS = 8;
 
+    // Damage border: [-244, 1997]
+    constexpr float MIN_HEIGHT_METERS = -254;
+    constexpr float MAX_HEIGHT_METERS = 2047;
 
     constexpr bool ENABLE_DEBUG_LOG = false;
     constexpr bool ENABLE_VERBOSE_LOG = false;
     constexpr bool ENABLE_VERY_VERBOSE_LOG = false;
-
-    constexpr bool DRAW_BOUNDARIES = false;
 }
 
 

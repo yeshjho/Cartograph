@@ -244,6 +244,8 @@ void ACartographBuildingDataSubsystem::EndPlay(const EEndPlayReason::Type EndPla
 
 void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 {
+	// TODO: Measure with a maxed-out save and optimize if too slow, don't want to time-slice it
+
 	const TArray<AFGBuildable*>& Buildables = AFGBuildableSubsystem::Get(GetWorld())->GetAllBuildablesRef();
 	const TMap<TSubclassOf<AFGBuildable>, TArray<FRuntimeBuildableInstanceData>>& LightweightBuildables = AFGLightweightBuildableSubsystem::Get(GetWorld())->GetAllLightweightBuildableInstances();
 
@@ -284,10 +286,6 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 			AddLightweightBuildable(InstanceData.TypeSpecificData, i, InstanceData.Transform, SoftType);
 		}
 	}
-
-	MinHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData[0].Transform.GetLocation().Z : -100;
-	MaxHeight = !CurrentBuildingData.IsEmpty() ? CurrentBuildingData.Last().Transform.GetLocation().Z : 100;
-	OnZFilterUpdated(0, 1);
 
 	CARTO_LOG("InitialBuildableGather Finished");
 

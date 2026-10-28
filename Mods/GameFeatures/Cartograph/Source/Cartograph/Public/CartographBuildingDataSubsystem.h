@@ -97,10 +97,4 @@ protected:
 	TArray<FVector> PositionsParam;
 	TArray<FQuat> RotationsParam;
 	TArray<FVector> ScalesParam;
-
-protected:
-	UPROPERTY(BlueprintReadOnly)
-	float MinHeight = -100.f;
-	UPROPERTY(BlueprintReadOnly)
-	float MaxHeight = 100.f;
 };

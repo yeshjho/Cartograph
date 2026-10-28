@@ -15,6 +15,8 @@
 namespace
 {
 	constexpr bool debugNiagaraDraw = false;
+
+	constexpr float MAP_HEIGHT_METERS = Cartograph::MAX_HEIGHT_METERS - Cartograph::MIN_HEIGHT_METERS;
 }
 
 
@@ -127,12 +129,8 @@ void ACartographMapDrawSubsystem::RedrawMap()
 
 void ACartographMapDrawSubsystem::OnZFilterUpdated(const float Min, const float Max)  // [0, 1]
 {
-	MinCached = Min;
-	MaxCached = Max;
-
-	const float Length = MaxHeight - MinHeight;
-	MinZFilter = FMath::Floor(Min * Length + MinHeight);
-	MaxZFilter = FMath::CeilToInt(Max * Length + MinHeight);
+	MinZFilter = FMath::Floor(Min * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS);
+	MaxZFilter = FMath::CeilToInt(Max * MAP_HEIGHT_METERS + Cartograph::MAX_HEIGHT_METERS);
 
 	CARTO_LOG("Min is now %f and max is now %f", MinZFilter, MaxZFilter);
 

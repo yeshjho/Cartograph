@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "Subsystem/ModSubsystem.h"
 
+#include "CartographHelpers.h"
+
 #include "CartographMapDrawSubsystem.generated.h"
 
 
@@ -58,10 +60,10 @@ public:
 protected:
 	bool IsMapTextureDirty = true;
 
-	float MinZFilter = -std::numeric_limits<float>::max();
-	float MaxZFilter = std::numeric_limits<float>::max();
-
 	bool IsMapBeingRendered = false;
+
+	float MinZFilter = Cartograph::MIN_HEIGHT_METERS;
+	float MaxZFilter = Cartograph::MAX_HEIGHT_METERS;
 
 	UPROPERTY(BlueprintRead)
 	TObjectPtr<UCartographSceneCaptureComponent2D> SceneCaptureComponent;
@@ -71,9 +73,11 @@ protected:
 
 	// For blueprint use only
 protected:
-	float MinCached = 0.f;
-	float MaxCached = 1.f;
-
 	UPROPERTY(BlueprintReadOnly)
 	bool DoShowBuildings = true;
+
+	UPROPERTY(BlueprintRead)
+	float MinHeight = Cartograph::MIN_HEIGHT_METERS;  // const
+	UPROPERTY(BlueprintRead)
+	float MaxHeight = Cartograph::MAX_HEIGHT_METERS;  // const
 };
