@@ -6,6 +6,8 @@
 #include "CartographMapDrawSubsystem.generated.h"
 
 
+class UCartographSceneCaptureComponent2D;
+class UNiagaraComponent;
 class UUserWidget;
 
 
@@ -22,6 +24,8 @@ public:
 
 	// Called when it's needed to recapture the map.
 	void MarkMapTextureDirty();
+
+	UNiagaraComponent* GetNiagaraComponentPerType(uint32 ClassHash);
 
 protected:
 	virtual void BeginPlay() override;
@@ -41,6 +45,12 @@ protected:
 	UFUNCTION(BlueprintCallable)
 	void OnVanillaMapMenuShown(const UUserWidget* Widget) const;
 
+	UFUNCTION(BlueprintCallable)
+	void OnMapOpen();
+
+	UFUNCTION(BlueprintCallable)
+	void OnMapClose();
+
 
 public:
 	inline static ACartographMapDrawSubsystem* Instance = nullptr;
@@ -51,8 +61,13 @@ protected:
 	float MinZFilter = -std::numeric_limits<float>::max();
 	float MaxZFilter = std::numeric_limits<float>::max();
 
-	UPROPERTY(BlueprintReadWrite)
 	bool IsMapBeingRendered = false;
+
+	UPROPERTY(BlueprintRead)
+	TObjectPtr<UCartographSceneCaptureComponent2D> SceneCaptureComponent;
+
+	UPROPERTY(BlueprintRead)
+	TMap<uint32, TObjectPtr<UNiagaraComponent>> NiagaraComponentPerType;
 
 	// For blueprint use only
 protected:

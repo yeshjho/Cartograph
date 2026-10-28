@@ -10,13 +10,14 @@
 
 
 class AFGBuildable;
-class UCanvasRenderTarget2D;
 class UFGBuildCategory;
 class UFGBuildSubCategory;
 class UFGBuildingDescriptor;
 class UFGCategory;
 class UFGFactoryCustomizationDescriptor_Material;
+class UNiagaraSystem;
 class UTexture2D;
+class UTextureRenderTarget2D;
 class UUserWidget;
 
 
@@ -143,7 +144,7 @@ public:
 	const FBuildLayerData* GetBuildLayerData(uint32 ClassHash);
 
 	template<typename T>
-	const T* GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, TSoftClassPtr<AFGBuildable> BuildableClass) const;
+	const T* GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, const TSoftClassPtr<AFGBuildable>& BuildableClass) const;
 
 private:
 	void RegisterMenuButton() const;
@@ -253,10 +254,13 @@ public:
     UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
     FWireData UnspecifiedWireData;
 
-protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
-	TSoftObjectPtr<UCanvasRenderTarget2D> RenderTarget;
+	TSoftObjectPtr<UTextureRenderTarget2D> RenderTarget;
 
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSoftObjectPtr<UNiagaraSystem> NiagaraSystem;
+
+protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftClassPtr<UUserWidget> MapContainerWidget;
 
@@ -272,7 +276,7 @@ protected:
 
 
 template<typename T>
-const T* UCartographGameInstanceModule::GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, TSoftClassPtr<AFGBuildable> BuildableClass) const
+const T* UCartographGameInstanceModule::GetDataByBuildableClass(const TMap<TSoftClassPtr<AFGBuildable>, T>& ClassMap, const TMap<TSoftClassPtr<UFGBuildCategory>, T>& CategoryMap, const TSoftClassPtr<AFGBuildable>& BuildableClass) const
 {
 	const T* Data = ClassMap.Find(BuildableClass);
 	if (!Data)

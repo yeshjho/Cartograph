@@ -379,19 +379,6 @@ void FBuildingData::FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildab
 		}
 		else
 		{
-			const FCategoryData* CategoryData = UCartographGameInstanceModule::Instance->GetDataByBuildableClass(
-				UCartographGameInstanceModule::Instance->BuildableBuildCategoryDataOverrideMap,
-				UCartographGameInstanceModule::Instance->BuildCategoryDataMap,
-				BuildableClass.Get());
-			if (!CategoryData && UCartographGameInstanceModule::Instance->ModdedBuildings.Contains(BuildableClass.Get()))
-			{
-				CategoryData = &UCartographGameInstanceModule::Instance->UnspecifiedCategoryData;
-			}
-			if (!CategoryData)
-			{
-				CARTO_LOG_WARNING("Can't find category data for %s", *BuildableClass->GetName());
-				return;
-			}
 
 			FRectangleDataCache RectangleData{
 				.CategoryData = CategoryData,

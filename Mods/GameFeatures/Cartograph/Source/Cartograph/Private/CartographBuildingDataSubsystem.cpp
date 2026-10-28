@@ -1,6 +1,7 @@
 ﻿#include "CartographBuildingDataSubsystem.h"
 
 #include "Net/UnrealNetwork.h"
+#include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 
 #include "FGBuildableSubsystem.h"
 #include "FGLightweightBuildableSubsystem.h"
@@ -79,7 +80,46 @@ void ACartographBuildingDataSubsystem::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// TODO: Send Dirty Data to Niagara
+	if (DirtyTypes.IsEmpty())
+	{
+		return;
+	}
+
+	auto* MapDrawSubsystem = ACartographMapDrawSubsystem::Instance;
+	if (!MapDrawSubsystem)
+	{
+		return;
+	}
+
+	// Process only one type per tick to prevent lag spike
+	const uint32 DirtyType = *DirtyTypes.CreateConstIterator();
+	DirtyTypes.Remove(DirtyType);
+	
+	UNiagaraComponent* Niagara = MapDrawSubsystem->GetNiagaraComponentPerType(DirtyType);
+	if (!Niagara)
+	{
+		return;
+	}
+
+	const uint32* Count = BuildingCountPerType.Find(DirtyType);
+	CARTO_LOG_ERROR_RETURN_IF_NULL(Count);
+
+	PositionsParam.Reset(*Count);
+	RotationsParam.Reset(*Count);
+	ScalesParam.Reset(*Count);
+
+	for (const FBuildingData& BuildingData : BuildingDataArray.Items)
+	{
+		PositionsParam.Add(BuildingData.Transform.GetLocation());
+		RotationsParam.Add(BuildingData.Transform.GetRotation());
+		ScalesParam.Add(BuildingData.Transform.GetScale3D());
+	}
+
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(Niagara, "User.Rotations", RotationsParam);
+	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(Niagara, "User.Scales", ScalesParam);
+
+	MapDrawSubsystem->MarkMapTextureDirty();
 }
 
 

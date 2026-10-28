@@ -1,24 +1,40 @@
 ﻿#include "CartographMapDrawSubsystem.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetTree.h"
 #include "Components/PanelWidget.h"
 #include "Components/Widget.h"
 #include "Misc/OutputDeviceNull.h"
+#include "NiagaraComponent.h"
 
+#include "CartographGameInstanceModule.h"
 #include "CartographHelpers.h"
-#include "Blueprint/WidgetTree.h"
+#include "CartographSceneCaptureComponent2D.h"
+
+
+namespace
+{
+	constexpr bool debugNiagaraDraw = false;
+}
 
 
 ACartographMapDrawSubsystem::ACartographMapDrawSubsystem()
 {
     ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnClient;
     bReplicates = false;
+
+	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
+
+	SceneCaptureComponent = CreateDefaultSubobject<UCartographSceneCaptureComponent2D>("SceneCaptureComponent");
+	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Type::Orthographic;
+	SceneCaptureComponent->bCaptureEveryFrame = false;
+	SceneCaptureComponent->TextureTarget = UCartographGameInstanceModule::Instance->RenderTarget.LoadSynchronous();
 }
 
 
 void ACartographMapDrawSubsystem::MarkMapTextureDirty()
 {
-	if (IsMapBeingRendered)  // TODO: Update this variable
+	if (IsMapBeingRendered)
 	{
 		RedrawMap();
 	}
@@ -26,6 +42,59 @@ void ACartographMapDrawSubsystem::MarkMapTextureDirty()
 	{
 		IsMapTextureDirty = true;
 	}
+}
+
+
+UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const uint32 ClassHash)
+{
+	if (const TObjectPtr<UNiagaraComponent>* NiagaraComponentPtr = NiagaraComponentPerType.Find(ClassHash))
+	{
+		return *NiagaraComponentPtr;
+	}
+
+	const auto* GameInstanceModule = UCartographGameInstanceModule::Instance;
+	CARTO_LOG_ERROR_DO_IF_NULL(GameInstanceModule, return nullptr);
+
+	const TSoftClassPtr<AFGBuildable>* ClassPtr = GameInstanceModule->ClassIDToClassPtrMap.Find(ClassHash);
+	CARTO_LOG_ERROR_DO_IF_NULL(ClassPtr, return nullptr);
+
+	const FCategoryData* CategoryData = GameInstanceModule->GetDataByBuildableClass(
+		GameInstanceModule->BuildableBuildCategoryDataOverrideMap,
+		GameInstanceModule->BuildCategoryDataMap,
+		*ClassPtr);
+	if (!CategoryData && GameInstanceModule->ModdedBuildings.Contains(*ClassPtr))
+	{
+		CategoryData = &GameInstanceModule->UnspecifiedCategoryData;
+	}
+	if (!CategoryData)
+	{
+		CARTO_LOG_WARNING("Can't find category data for %s", *ClassPtr->LoadSynchronous()->GetName());
+		return nullptr;
+	}
+
+	UNiagaraComponent* Niagara = NewObject<UNiagaraComponent>(this);
+	Niagara->SetAsset(GameInstanceModule->NiagaraSystem.LoadSynchronous());
+	Niagara->SetAutoActivate(false);
+	if (!debugNiagaraDraw)
+	{
+		Niagara->SetOnlyOwnerSee(true);
+	}
+	Niagara->SetupAttachment(RootComponent);
+
+	Niagara->SetWorldLocation(FVector::ZeroVector);
+	Niagara->bNeverDistanceCull = true;
+
+	Niagara->RegisterComponent();
+	Niagara->Activate(true);
+
+	Niagara->SetColorParameter("User.FillColor", CategoryData->MainColor);
+	Niagara->SetColorParameter("User.BorderColor", CategoryData->OutlineColor);
+	Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
+	//Niagara->SetFloatParameter("User.Opacity", CategoryData->Opacity);
+
+	NiagaraComponentPerType[ClassHash] = Niagara;
+
+	return Niagara;
 }
 
 
@@ -42,6 +111,17 @@ void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReas
     Instance = nullptr;
 
 	Super::EndPlay(EndPlayReason);
+}
+
+
+void ACartographMapDrawSubsystem::RedrawMap()
+{
+	// TODO: Setup position, width, near/far plane according to pan, zoom, z filter
+	SceneCaptureComponent->OrthoWidth;
+
+	// TODO: Hide/Unhide types
+
+	SceneCaptureComponent->CaptureSceneDeferred();
 }
 
 
@@ -105,3 +185,20 @@ void ACartographMapDrawSubsystem::OnVanillaMapMenuShown(const UUserWidget* Widge
 	Button->CallFunctionByNameWithArguments(TEXT("SetShowHideText"), Ar, nullptr, true);
 }
 
+
+void ACartographMapDrawSubsystem::OnMapOpen()
+{
+	IsMapBeingRendered = true;
+
+	if (IsMapTextureDirty)
+	{
+		RedrawMap();
+		IsMapTextureDirty = false;
+	}
+}
+
+
+void ACartographMapDrawSubsystem::OnMapClose()
+{
+	IsMapBeingRendered = false;
+}

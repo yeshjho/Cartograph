@@ -92,6 +92,12 @@ protected:
 	TMap<uint32, uint32> BuildingCountPerType;
 	TSet<uint32> DirtyTypes;
 
+	// Trade-off: Keeping as member variables not to allocate every time there's a modification.
+	// More memory, better performance.
+	TArray<FVector> PositionsParam;
+	TArray<FQuat> RotationsParam;
+	TArray<FVector> ScalesParam;
+
 protected:
 	UPROPERTY(BlueprintReadOnly)
 	float MinHeight = -100.f;

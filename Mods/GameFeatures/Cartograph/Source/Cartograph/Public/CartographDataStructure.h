@@ -48,16 +48,8 @@ enum class EBuildingDataType : uint8
 };
 
 
-struct FCuboidDataCache
-{
-	const struct FCategoryData* CategoryData = nullptr;
-	FVector Corners[4]{};
-};
-
-
 struct FNormalDataCache
 {
-	FCuboidDataCache CuboidData;
 };
 
 
