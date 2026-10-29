@@ -1,4 +1,5 @@
 ﻿#pragma once
+
 #include "CoreMinimal.h"
 
 #include <variant>
@@ -9,54 +10,7 @@
 
 
 class AFGBuildable;
-class UTexture2D;
 struct FFGDynamicStruct;
-
-
-struct FSplineExtraData
-{
-	TArray<FVector> Points;
-
-	bool operator==(const FSplineExtraData& Other) const = default;
-};
-
-
-struct FWireExtraData
-{
-	FVector End;
-
-	bool operator==(const FWireExtraData& Other) const = default;
-};
-
-
-struct FBeamExtraData
-{
-	float Length = 0.f;
-
-	bool operator==(const FBeamExtraData& Other) const = default;
-};
-
-
-enum class EBuildingDataType : uint8
-{
-	Invalid = 0,
-
-	Cuboid,
-	Spline,
-	Wire,
-	Beam,
-};
-
-
-struct FNormalDataCache
-{
-};
-
-
-struct FSplineDataCache
-{
-	const struct FSplineData* SplineData = nullptr;
-};
 
 
 USTRUCT()
@@ -64,34 +18,23 @@ struct FBuildingData : public FFastArraySerializerItem
 {
 	GENERATED_BODY()
 
+	FBuildingData() = default;
+	FBuildingData(FTransform Transform, const AFGBuildable* Buildable);
+	FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType);
+
 #pragma region("Serialized")
-	uint32 BuildableClassHash = 0;
-	FTransform Transform;
-	//FFactoryCustomizationData CustomizationData;
-	std::variant<std::monostate, FSplineExtraData, FWireExtraData, FBeamExtraData> BuildableExtraData;
+	uint32 BuildableClassHash = 0;  // Redirection is applied
+	std::variant<FTransform, TArray<FVector>> TransformOrSplinePoints;
 #pragma endregion
-
-
-	EBuildingDataType DataType = EBuildingDataType::Invalid;
-	std::variant<FNormalDataCache, FSplineDataCache, const struct FWireData*> DataCache;
-	const struct FBuildLayerData* LayerDataCache = nullptr;
-	FBox VisualBoxCache{ ForceInit };  // World
-
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
-	void AddExtraData(const AFGBuildable* Buildable);
-	void AddExtraData(const FFGDynamicStruct& TypeSpecificData);
-
-	void FillInCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data
-	void FillInHash(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data
-	void FillInHashAndCache(const TSubclassOf<AFGBuildable>& BuildableClass);  // Call it after filling in the extra data
-    void FillInVisualBoxCache(const TSubclassOf<AFGBuildable>& OriginalBuildableClass);  // Call it after filling in the extra data
-
-    void FillInSplineVisualBoxCache();  // Call it after filling in the extra data & cache
-
 	static uint32 GetHash(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
 	static FVector GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass);
+
+private:
+	void FillTransformOrSplinePoints(FTransform Transform, const AFGBuildable* Buildable);
+	void FillTransformOrSplinePoints(FTransform Transform, const FFGDynamicStruct& TypeSpecificData);
 };
 
 

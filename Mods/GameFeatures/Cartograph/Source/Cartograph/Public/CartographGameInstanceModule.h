@@ -202,14 +202,9 @@ public:
 	TMap<TSoftClassPtr<UFGFactoryCustomizationDescriptor_Material>, FCategoryData> MaterialBuildCategoryDataOverrideMap;
 
 
-	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Override")
-	TMap<TSoftClassPtr<AFGBuildable>, TSoftObjectPtr<UTexture2D>> BuildableIconOverrideMap;
-
+	// TODO: Make it FVector
 	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Override")
 	TMap<TSoftClassPtr<AFGBuildable>, FVector2D> BuildableSizeOverrideMap;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Override")
-	TMap<TSoftClassPtr<AFGBuildable>, FRotator> BuildableExtraRotationMap;
 
 
 	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Special Data")

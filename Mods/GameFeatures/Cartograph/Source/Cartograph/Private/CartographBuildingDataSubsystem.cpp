@@ -12,22 +12,6 @@
 #include "Buildables/FGBuildable.h"
 
 
-namespace
-{
-	template<typename T>
-	FBuildingData ConstructBuildingData(const T& Building, FTransform Transform, const TSoftClassPtr<AFGBuildable>& BuildableClass)
-	{
-		FBuildingData Data{
-			.Transform = std::move(Transform),
-		};
-		Data.AddExtraData(Building);
-		Data.FillInHashAndCache(BuildableClass.Get());
-
-		return Data;
-	}
-}
-
-
 bool FBuildingDataArray::NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams)
 {
 	return FastArrayDeltaSerialize<FBuildingData, FBuildingDataArray>(Items, DeltaParams, *this);
@@ -104,15 +88,25 @@ void ACartographBuildingDataSubsystem::Tick(const float DeltaSeconds)
 	const uint32* Count = BuildingCountPerType.Find(DirtyType);
 	CARTO_LOG_ERROR_RETURN_IF_NULL(Count);
 
+	// TODO: Different logic for splines (have a hashset of spline types) & factor out as a member function
+
 	PositionsParam.Reset(*Count);
 	RotationsParam.Reset(*Count);
 	ScalesParam.Reset(*Count);
 
 	for (const FBuildingData& BuildingData : BuildingDataArray.Items)
 	{
-		PositionsParam.Add(BuildingData.Transform.GetLocation());
-		RotationsParam.Add(BuildingData.Transform.GetRotation());
-		ScalesParam.Add(BuildingData.Transform.GetScale3D());
+		if (BuildingData.BuildableClassHash != DirtyType)
+		{
+			continue;
+		}
+
+		const FTransform* Transform = std::get_if<FTransform>(&BuildingData.TransformOrSplinePoints);
+		CARTO_LOG_ERROR_CONTINUE_IF_NULL(Transform);
+
+		PositionsParam.Add(Transform->GetLocation());
+		RotationsParam.Add(Transform->GetRotation());
+		ScalesParam.Add(Transform->GetScale3D());
 	}
 
 	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
@@ -127,10 +121,7 @@ void ACartographBuildingDataSubsystem::OnAddBuildable(const AFGBuildable* Builda
 {
 	CARTO_LOG_VERBOSE("AddBuildable: %s", *Buildable->GetClass()->GetName());
 
-	if (!Cartograph::IsBuildableIgnored(Buildable->GetClass()))
-	{
-		AddBuildable(Buildable);
-	}
+	AddBuildable(Buildable);
 }
 
 
@@ -265,10 +256,7 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 
 	for (const AFGBuildable* Buildable : Buildables)
 	{
-		if (!Cartograph::IsBuildableIgnored(Buildable->GetClass()))
-		{
-			AddBuildable(Buildable);
-		}
+		AddBuildable(Buildable);
 	}
 
 	for (const auto& [Type, Arr] : LightweightBuildables)
@@ -298,25 +286,30 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 
 void ACartographBuildingDataSubsystem::AddBuildable(const AFGBuildable* Buildable)
 {
-	FBuildingData Data = ConstructBuildingData(Buildable, Buildable->GetTransform(), Buildable->GetClass());
+	if (!Cartograph::IsBuildableIgnored(Buildable->GetClass()))
+	{
+		return;
+	}
+
+	FBuildingData Data{ Buildable->GetTransform(), Buildable };
+
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
-	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
-
-	BuildableToArrayIndex[Buildable] = BuildingDataArray.Items.Num() - 1;
-
 	BuildingCountPerType[Data.BuildableClassHash]++;
+
+	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
+	BuildableToArrayIndex[Buildable] = BuildingDataArray.Items.Num() - 1;
 }
 
 
 void ACartographBuildingDataSubsystem::AddLightweightBuildable(const FFGDynamicStruct& TypeSpecificData, const int32 InstanceIndex, const FTransform& Transform, const TSoftClassPtr<AFGBuildable>& BuildableClass)
 {
-	FBuildingData Data = ConstructBuildingData(TypeSpecificData, Transform, BuildableClass);
+	FBuildingData Data{ Transform, TypeSpecificData, BuildableClass };
+
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
-	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
-
-	LightweightBuildableToArrayIndex[BuildableClass.Get()][InstanceIndex] = BuildingDataArray.Items.Num() - 1;
-
 	BuildingCountPerType[Data.BuildableClassHash]++;
+
+	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
+	LightweightBuildableToArrayIndex[BuildableClass.Get()][InstanceIndex] = BuildingDataArray.Items.Num() - 1;
 }
 
 

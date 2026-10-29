@@ -89,6 +89,10 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	Niagara->RegisterComponent();
 	Niagara->Activate(true);
 
+	// TODO: Different params for splines (have a hashset of spline types)
+
+	Niagara->SetVectorParameter("User.Extent", /*TODO: Have a static map*/);
+
 	Niagara->SetColorParameter("User.FillColor", CategoryData->MainColor);
 	Niagara->SetColorParameter("User.BorderColor", CategoryData->OutlineColor);
 	Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
