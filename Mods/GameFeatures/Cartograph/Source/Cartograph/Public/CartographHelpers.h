@@ -16,12 +16,8 @@ namespace Cartograph
     constexpr double MAP_WIDTH_CENTIMETERS = EAST_BOUND_CENTIMETERS - WEST_BOUND_CENTIMETERS;
     constexpr double MAP_HEIGHT_CENTIMETERS = SOUTH_BOUND_CENTIMETERS - NORTH_BOUND_CENTIMETERS;
 
-    constexpr int RENDER_TEXTURE_SIZE = 1024 * 1;
-
-    constexpr int SPLINE_SEGMENTS = 8;
-
     // Damage border: [-244, 1997]
-    constexpr float MIN_HEIGHT_METERS = -254;
+    constexpr float MIN_HEIGHT_METERS = -294;
     constexpr float MAX_HEIGHT_METERS = 2047;
 
     constexpr bool ENABLE_DEBUG_LOG = false;
@@ -45,6 +41,7 @@ namespace Cartograph
 
 
 class AFGBuildable;
+
 namespace Cartograph
 {
     bool IsBuildableIgnored(const TSoftClassPtr<AFGBuildable>& Type);

@@ -60,20 +60,6 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	const TSoftClassPtr<AFGBuildable>* ClassPtr = GameInstanceModule->ClassIDToClassPtrMap.Find(ClassHash);
 	CARTO_LOG_ERROR_DO_IF_NULL(ClassPtr, return nullptr);
 
-	const FCategoryData* CategoryData = GameInstanceModule->GetDataByBuildableClass(
-		GameInstanceModule->BuildableBuildCategoryDataOverrideMap,
-		GameInstanceModule->BuildCategoryDataMap,
-		*ClassPtr);
-	if (!CategoryData && GameInstanceModule->ModdedBuildings.Contains(*ClassPtr))
-	{
-		CategoryData = &GameInstanceModule->UnspecifiedCategoryData;
-	}
-	if (!CategoryData)
-	{
-		CARTO_LOG_WARNING("Can't find category data for %s", *ClassPtr->LoadSynchronous()->GetName());
-		return nullptr;
-	}
-
 	UNiagaraComponent* Niagara = NewObject<UNiagaraComponent>(this);
 	Niagara->SetAsset(GameInstanceModule->NiagaraSystem.LoadSynchronous());
 	Niagara->SetAutoActivate(false);
@@ -89,14 +75,44 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	Niagara->RegisterComponent();
 	Niagara->Activate(true);
 
-	// TODO: Different params for splines (have a hashset of spline types)
+	if (GameInstanceModule->SplineBuildables.Contains(ClassHash))
+	{
+		const FSplineData* SplineData = GameInstanceModule->BuildableSplineDataMap.Find(*ClassPtr);
+		if (!SplineData && GameInstanceModule->ModdedBuildings.Contains(*ClassPtr))
+		{
+			SplineData = &GameInstanceModule->UnspecifiedSplineData;
+		}
+		if (!SplineData)
+		{
+			CARTO_LOG_WARNING("Can't find spline data for %s", *ClassPtr->LoadSynchronous()->GetName());
+			return nullptr;
+		}
 
-	Niagara->SetVectorParameter("User.Extent", /*TODO: Have a static map*/);
+		Niagara->SetColorParameter("User.Color", SplineData->Color);
+		Niagara->SetFloatParameter("User.Thickness", SplineData->Thickness);
+	}
+	else
+	{
+		const FCategoryData* CategoryData = GameInstanceModule->GetDataByBuildableClass(
+			GameInstanceModule->BuildableBuildCategoryDataOverrideMap,
+			GameInstanceModule->BuildCategoryDataMap,
+			*ClassPtr);
+		if (!CategoryData && GameInstanceModule->ModdedBuildings.Contains(*ClassPtr))
+		{
+			CategoryData = &GameInstanceModule->UnspecifiedCategoryData;
+		}
+		if (!CategoryData)
+		{
+			CARTO_LOG_WARNING("Can't find category data for %s", *ClassPtr->LoadSynchronous()->GetName());
+			return nullptr;
+		}
 
-	Niagara->SetColorParameter("User.FillColor", CategoryData->MainColor);
-	Niagara->SetColorParameter("User.BorderColor", CategoryData->OutlineColor);
-	Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
-	//Niagara->SetFloatParameter("User.Opacity", CategoryData->Opacity);
+		Niagara->SetVectorParameter("User.Extent", /*TODO: Have a static map*/);
+
+		Niagara->SetColorParameter("User.FillColor", CategoryData->MainColor);
+		Niagara->SetColorParameter("User.BorderColor", CategoryData->OutlineColor);
+		Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
+	}
 
 	NiagaraComponentPerType[ClassHash] = Niagara;
 

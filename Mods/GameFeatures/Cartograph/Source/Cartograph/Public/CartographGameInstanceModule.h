@@ -179,19 +179,19 @@ public:
 
 	FRuntimeConfig RuntimeConfig;
 
-#pragma region Static Data
-	UPROPERTY()  // Generated Data
-    TMap<uint32, TSoftClassPtr<AFGBuildable>> ClassIDToClassPtrMap;
-	UPROPERTY()  // Generated Data
-    TMap<TSoftClassPtr<AFGBuildable>, uint32> ClassPtrToClassIDMap;
+#pragma region Generated Data
+	TMap<uint32, TSoftClassPtr<AFGBuildable>> ClassIDToClassPtrMap;
+	TMap<TSoftClassPtr<AFGBuildable>, uint32> ClassPtrToClassIDMap;
 
-	UPROPERTY()  // Generated Data
 	TMap<TSoftClassPtr<AFGBuildable>, FBuildingDescriptorData> ClassPtrToDescriptorDataMap;
 
+	TSet<uint32> SplineBuildables;
+
 	TMap<TSoftClassPtr<AFGBuildable>, FString /*ModName*/> ModdedBuildings;
-    TMap<FString /*ModName*/, FBuildLayerData> ModdedBuildLayerData;
+	TMap<FString /*ModName*/, FBuildLayerData> ModdedBuildLayerData;
+#pragma endregion
 
-
+#pragma region Static Data
 	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Category Data")
 	TMap<TSoftClassPtr<UFGBuildCategory>, FCategoryData> BuildCategoryDataMap;
 
@@ -210,6 +210,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Special Data")
 	TMap<TSoftClassPtr<AFGBuildable>, FSplineData> BuildableSplineDataMap;
 
+	// TODO: Merge into BuildableSplineDataMap and remove FWireData
 	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Special Data")
     TMap<TSoftClassPtr<AFGBuildable>, FWireData> BuildableWireDataMap;
 
@@ -242,12 +243,6 @@ public:
 	// SegmentsConfigName should be None.
 	UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
 	FSplineData UnspecifiedSplineData;
-
-	UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
-    int UnspecifiedSplineSegments;
-
-    UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
-    FWireData UnspecifiedWireData;
 
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftObjectPtr<UTextureRenderTarget2D> RenderTarget;

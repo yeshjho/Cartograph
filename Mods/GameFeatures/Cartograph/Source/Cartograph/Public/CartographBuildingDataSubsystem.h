@@ -77,6 +77,8 @@ private:
 	void AddLightweightBuildable(const FFGDynamicStruct& TypeSpecificData, int32 InstanceIndex, const FTransform& Transform, const TSoftClassPtr<AFGBuildable>& BuildableClass);
 	void RemoveBuildingDuringRuntime(const TSoftClassPtr<AFGBuildable>& BuildableClass, uint32 ArrayIndex);
 
+	void SendDataToNiagara();
+
 
 public:
 	inline static ACartographBuildingDataSubsystem* Instance = nullptr;
@@ -97,4 +99,6 @@ protected:
 	TArray<FVector> PositionsParam;
 	TArray<FQuat> RotationsParam;
 	TArray<FVector> ScalesParam;
+	TArray<int32> SplineGroupIdsParam;
+	TArray<float> SplineOrdersParam;
 };

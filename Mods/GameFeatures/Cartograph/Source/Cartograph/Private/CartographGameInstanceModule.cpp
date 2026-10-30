@@ -242,6 +242,7 @@ void UCartographGameInstanceModule::GatherBuildables()
     ClassIDToClassPtrMap.Empty();
     ClassPtrToClassIDMap.Empty();
     ClassPtrToDescriptorDataMap.Empty();
+	SplineBuildables.Empty();
 
 	for (const FTopLevelAssetPath& AssetPath : GetDerivedClassPaths(AFGBuildable::StaticClass()))
 	{
@@ -287,8 +288,23 @@ void UCartographGameInstanceModule::GatherBuildables()
 		}
 
 		const uint32 Hash = TextKeyUtil::HashString(AssetPath.ToString());
+		if (ClassIDToClassPtrMap.Contains(Hash))
+		{
+			CARTO_LOG_ERROR("!!!Hash Collision!!! %u was being used for %s but %s also resulted the same!", 
+				Hash,
+				*ClassIDToClassPtrMap.FindRef(Hash).LoadSynchronous()->GetName(),
+				*Name);
+		}
+
 		ClassPtrToClassIDMap.Add(Class.Get(), Hash);
 		ClassIDToClassPtrMap.Add(Hash, Class.Get());
+		if (Class->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()) ||
+			Class->IsChildOf(AFGBuildableWire::StaticClass()) ||
+			Class->IsChildOf(AFGBuildableBeam::StaticClass()))
+		{
+			SplineBuildables.Add(Hash);
+		}
+
 		CARTO_LOG_DEBUG("Path: %s, Class: %s, Hash: %u", *AssetPath.ToString(), *Name, Hash);
 	}
 

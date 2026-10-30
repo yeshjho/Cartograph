@@ -63,57 +63,7 @@ void ACartographBuildingDataSubsystem::GetLifetimeReplicatedProps(TArray<FLifeti
 void ACartographBuildingDataSubsystem::Tick(const float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-
-	if (DirtyTypes.IsEmpty())
-	{
-		return;
-	}
-
-	auto* MapDrawSubsystem = ACartographMapDrawSubsystem::Instance;
-	if (!MapDrawSubsystem)
-	{
-		return;
-	}
-
-	// Process only one type per tick to prevent lag spike
-	const uint32 DirtyType = *DirtyTypes.CreateConstIterator();
-	DirtyTypes.Remove(DirtyType);
-	
-	UNiagaraComponent* Niagara = MapDrawSubsystem->GetNiagaraComponentPerType(DirtyType);
-	if (!Niagara)
-	{
-		return;
-	}
-
-	const uint32* Count = BuildingCountPerType.Find(DirtyType);
-	CARTO_LOG_ERROR_RETURN_IF_NULL(Count);
-
-	// TODO: Different logic for splines (have a hashset of spline types) & factor out as a member function
-
-	PositionsParam.Reset(*Count);
-	RotationsParam.Reset(*Count);
-	ScalesParam.Reset(*Count);
-
-	for (const FBuildingData& BuildingData : BuildingDataArray.Items)
-	{
-		if (BuildingData.BuildableClassHash != DirtyType)
-		{
-			continue;
-		}
-
-		const FTransform* Transform = std::get_if<FTransform>(&BuildingData.TransformOrSplinePoints);
-		CARTO_LOG_ERROR_CONTINUE_IF_NULL(Transform);
-
-		PositionsParam.Add(Transform->GetLocation());
-		RotationsParam.Add(Transform->GetRotation());
-		ScalesParam.Add(Transform->GetScale3D());
-	}
-
-	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
-	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(Niagara, "User.Rotations", RotationsParam);
-	UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(Niagara, "User.Scales", ScalesParam);
-
-	MapDrawSubsystem->MarkMapTextureDirty();
+	SendDataToNiagara();
 }
 
 
@@ -334,4 +284,96 @@ void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftCl
 	}
 
 	BuildingCountPerType[TypeHash]--;
+}
+
+void ACartographBuildingDataSubsystem::SendDataToNiagara()
+{
+	if (DirtyTypes.IsEmpty())
+	{
+		return;
+	}
+
+	auto* MapDrawSubsystem = ACartographMapDrawSubsystem::Instance;
+	if (!MapDrawSubsystem)
+	{
+		return;
+	}
+
+	// Process only one type per tick to prevent lag spike
+	const uint32 DirtyType = *DirtyTypes.CreateConstIterator();
+	DirtyTypes.Remove(DirtyType);
+
+	UNiagaraComponent* Niagara = MapDrawSubsystem->GetNiagaraComponentPerType(DirtyType);
+	if (!Niagara)
+	{
+		return;
+	}
+
+	const uint32* Count = BuildingCountPerType.Find(DirtyType);
+	CARTO_LOG_ERROR_RETURN_IF_NULL(Count);
+
+	const auto* GameInstanceModule = UCartographGameInstanceModule::Instance;
+	CARTO_LOG_ERROR_RETURN_IF_NULL(GameInstanceModule);
+
+	if (GameInstanceModule->SplineBuildables.Contains(DirtyType))
+	{
+		// Randomly chosen number; didn't measure
+		constexpr int AveragePointCountPerSpline = Cartograph::MAX_SPLINE_POINT_COUNT / 3;
+		PositionsParam.Reset(*Count * AveragePointCountPerSpline);
+		SplineGroupIdsParam.Reset(*Count * AveragePointCountPerSpline);
+		SplineOrdersParam.Reset(*Count * AveragePointCountPerSpline);
+
+		int32 SplineIndex = 0;
+		for (const FBuildingData& BuildingData : BuildingDataArray.Items)
+		{
+			if (BuildingData.BuildableClassHash != DirtyType)
+			{
+				continue;
+			}
+
+			const TArray<FVector>* SplinePoints = std::get_if<TArray<FVector>>(&BuildingData.TransformOrSplinePoints);
+			CARTO_LOG_ERROR_CONTINUE_IF_NULL(SplinePoints);
+
+			const int Size = SplinePoints->Num();
+			for (int i = 0; i < Size; i++)
+			{
+				PositionsParam.Add((*SplinePoints)[i]);
+				SplineGroupIdsParam.Add(SplineIndex);
+				SplineOrdersParam.Add(static_cast<float>(i));
+			}
+
+			SplineIndex++;
+		}
+
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(Niagara, "User.SplineGroupIds", SplineGroupIdsParam);
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(Niagara, "User.SplineOrders", SplineOrdersParam);
+	}
+	else
+	{
+		PositionsParam.Reset(*Count);
+		RotationsParam.Reset(*Count);
+		ScalesParam.Reset(*Count);
+
+		for (const FBuildingData& BuildingData : BuildingDataArray.Items)
+		{
+			if (BuildingData.BuildableClassHash != DirtyType)
+			{
+				continue;
+			}
+
+			const FTransform* Transform = std::get_if<FTransform>(&BuildingData.TransformOrSplinePoints);
+			CARTO_LOG_ERROR_CONTINUE_IF_NULL(Transform);
+
+			PositionsParam.Add(Transform->GetLocation());
+			RotationsParam.Add(Transform->GetRotation());
+			ScalesParam.Add(Transform->GetScale3D());
+		}
+
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(Niagara, "User.Rotations", RotationsParam);
+		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(Niagara, "User.Scales", ScalesParam);
+	}
+
+	MapDrawSubsystem->MarkMapTextureDirty();
 }

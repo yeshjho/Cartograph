@@ -32,80 +32,76 @@ FBuildingData::FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeS
 }
 
 
-bool FBuildingData::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess)
+bool FBuildingData::NetSerialize(FArchive& Ar, [[maybe_unused]] UPackageMap* Map, bool& bOutSuccess)
 {
+	bOutSuccess = true;
+
+	const bool IsSerializing = Ar.IsSaving();
+
 	Ar.SerializeBits(&BuildableClassHash, 32);
 
-	if (!Ar.IsLoading())  // Serialize
-	{
-		FVector Location = Transform.GetLocation();
-		bOutSuccess &= SerializePackedVector<1, 24>(Location, Ar);
-		Transform.Rotator().SerializeCompressedShort(Ar);
+	bool IsTransform = holds_alternative<FTransform>(TransformOrSplinePoints);
+	Ar.SerializeBits(&IsTransform, 1);
 
-		// We really need to pack the data, so we'll ignore scales for the clients.
-		//FVector Scale = Transform.GetScale3D();
-		//bOutSuccess &= SerializePackedVector<1, 24>(Scale, Ar);
+	if (IsTransform)
+	{
+		if (IsSerializing)
+		{
+			const auto& Transform = get<FTransform>(TransformOrSplinePoints);
+			FVector Location = Transform.GetLocation();
+			bOutSuccess &= SerializePackedVector<1, 20>(Location, Ar);
+			Transform.Rotator().SerializeCompressedShort(Ar);
+
+			// We really need to pack the data, so we'll ignore scales for the clients.
+			//FVector Scale = Transform.GetScale3D();
+			//bOutSuccess &= SerializePackedVector<10, 20>(Scale, Ar);
+		}
+		else  // Deserialize
+		{
+			FVector Location;
+			bOutSuccess &= SerializePackedVector<1, 20>(Location, Ar);
+			FRotator Rotation;
+			Rotation.SerializeCompressedShort(Ar);
+
+			//FVector Scale;
+			//bOutSuccess &= SerializePackedVector<10, 20>(Scale, Ar);
+
+			TransformOrSplinePoints = FTransform{ Rotation, Location/*, Scale*/ };
+		}
 	}
-	else  // Deserialize
+	else
 	{
-		FVector Location;
-		bOutSuccess &= SerializePackedVector<1, 24>(Location, Ar);
-		FRotator Rotation;
-		Rotation.SerializeCompressedShort(Ar);
-		Transform = FTransform{ Rotation, Location };
-
-		//FVector Scale;
-		//bOutSuccess &= SerializePackedVector<1, 24>(Scale, Ar);
-		//Transform.SetScale3D(Scale);
-	}
-
-	//Ar << CustomizationData;
-
-	int ExtraDataIndex = BuildableExtraData.index();
-	Ar.SerializeBits(&ExtraDataIndex, 2);  // NOTE: Increase the bits if more extra data types are added
-	if (!Ar.IsLoading())  // Serialize
-	{
-		std::visit([&Ar](auto&& Data)
+		uint32 Num = 0;
+		if (IsSerializing)
+		{
+			auto& SplinePoints = get<TArray<FVector>>(TransformOrSplinePoints);
+			Num = static_cast<uint32>(SplinePoints.Num());
+			Ar.SerializeIntPacked(Num);
+			for (FVector& Point : SplinePoints)
 			{
-				Ar << Data;
-			},
-			BuildableExtraData
-		);
-	}
-	else  // Deserialize
-	{
-		switch (ExtraDataIndex)
-		{
-		case 0:
-			BuildableExtraData = std::monostate{};
-			break;
-		case 1:
-		{
-			FSplineExtraData SplineData{};
-			Ar << SplineData;
-			BuildableExtraData = std::move(SplineData);
-			break;
+				bOutSuccess &= SerializePackedVector<1, 20>(Point, Ar);
+			}
 		}
-		case 2:
+		else
 		{
-			FWireExtraData WireData{};
-			Ar << WireData;
-			BuildableExtraData = std::move(WireData);
-			break;
-		}
-		case 3:
-		{
-			FBeamExtraData BeamData{};
-			Ar << BeamData;
-			BuildableExtraData = std::move(BeamData);
-			break;
-		}
-		default:
-			break;
+			Ar.SerializeIntPacked(Num);
+			if (Num > Cartograph::MAX_SPLINE_POINT_COUNT)
+			{
+				Ar.SetError();
+				bOutSuccess = false;
+				return true;
+			}
+
+			TArray<FVector> Points;
+			Points.SetNumUninitialized(static_cast<int>(Num));
+			for (FVector& Point : Points)
+			{
+				bOutSuccess &= SerializePackedVector<1, 20>(Point, Ar);
+			}
+			TransformOrSplinePoints = std::move(Points);
 		}
 	}
 
-	bOutSuccess = true;
 	return true;
 }
 

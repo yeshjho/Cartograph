@@ -13,6 +13,12 @@ class AFGBuildable;
 struct FFGDynamicStruct;
 
 
+namespace Cartograph
+{
+	constexpr int MAX_SPLINE_POINT_COUNT = 24;
+}
+
+
 USTRUCT()
 struct FBuildingData : public FFastArraySerializerItem
 {
@@ -22,10 +28,8 @@ struct FBuildingData : public FFastArraySerializerItem
 	FBuildingData(FTransform Transform, const AFGBuildable* Buildable);
 	FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType);
 
-#pragma region("Serialized")
 	uint32 BuildableClassHash = 0;  // Redirection is applied
 	std::variant<FTransform, TArray<FVector>> TransformOrSplinePoints;
-#pragma endregion
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
