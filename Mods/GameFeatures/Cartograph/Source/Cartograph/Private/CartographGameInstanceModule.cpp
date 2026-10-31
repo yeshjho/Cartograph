@@ -390,8 +390,8 @@ void UCartographGameInstanceModule::GatherModOverrides()
 #define VAR(x) std::make_pair(std::ref(x), FName{ #x })
 	const auto OverrideableVariables = std::make_tuple(
 		VAR(BuildCategoryDataMap), VAR(BuildableBuildCategoryDataOverrideMap), VAR(MaterialBuildCategoryDataOverrideMap),
-		VAR(BuildableSizeOverrideMap),
-		VAR(BuildableSplineDataMap), VAR(BuildableWireDataMap),
+		VAR(BuildableSizeOverrideMap), VAR(VariableSizeBuildable),
+		VAR(BuildableSplineDataMap),
 		VAR(BuildableClassRedirectMap), VAR(BuildableToIgnore),
 		/*VAR(LayerCategories),*/ VAR(BuildLayerDataMap), VAR(BuildableBuildLayerDataOverrideMap), VAR(MaterialBuildLayerDataOverrideMap));
 #undef VAR

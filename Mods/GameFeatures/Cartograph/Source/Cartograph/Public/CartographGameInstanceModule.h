@@ -53,19 +53,6 @@ struct FSplineData
 
 
 USTRUCT()
-struct FWireData
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditDefaultsOnly)
-    FLinearColor Color;
-
-	UPROPERTY(EditDefaultsOnly)
-	float Thickness;
-};
-
-
-USTRUCT()
 struct FLayerSubCategoryData
 {
 	GENERATED_BODY()
@@ -204,17 +191,18 @@ public:
 	TMap<TSoftClassPtr<UFGFactoryCustomizationDescriptor_Material>, FCategoryData> MaterialBuildCategoryDataOverrideMap;
 
 
-	// TODO: Make it FVector
-	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Override")
-	TMap<TSoftClassPtr<AFGBuildable>, FVector2D> BuildableSizeOverrideMap;
+	// Also used for caching at runtime
+	UPROPERTY(EditDefaultsOnly, Category = "Draw Data")
+	TMap<TSoftClassPtr<AFGBuildable>, FVector> BuildableSizeOverrideMap;
+
+	// Buildables that has variable size thus their bound box can't be cached. ex) conveyor lifts
+	// This might be generatable, but couldn't find the right one to use
+	UPROPERTY(EditDefaultsOnly, Category = "Draw Data")
+	TSet<TSoftClassPtr<AFGBuildable>> VariableSizeBuildable;
 
 
-	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Special Data")
+	UPROPERTY(EditDefaultsOnly, Category = "Draw Data")
 	TMap<TSoftClassPtr<AFGBuildable>, FSplineData> BuildableSplineDataMap;
-
-	// TODO: Merge into BuildableSplineDataMap and remove FWireData
-	UPROPERTY(EditDefaultsOnly, Category = "Draw Data/Special Data")
-    TMap<TSoftClassPtr<AFGBuildable>, FWireData> BuildableWireDataMap;
 
 
 	UPROPERTY(EditDefaultsOnly, Category = "Default")
@@ -250,6 +238,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftObjectPtr<UNiagaraSystem> NiagaraSystem;
+
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSoftObjectPtr<UNiagaraSystem> SplineNiagaraSystem;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
