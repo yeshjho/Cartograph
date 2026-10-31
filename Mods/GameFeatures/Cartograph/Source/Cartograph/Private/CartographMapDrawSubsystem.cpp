@@ -7,6 +7,8 @@
 #include "Misc/OutputDeviceNull.h"
 #include "NiagaraComponent.h"
 
+#include "FGBuildSubCategory.h"
+
 #include "CartographGameInstanceModule.h"
 #include "CartographHelpers.h"
 #include "CartographSceneCaptureComponent2D.h"
@@ -14,7 +16,7 @@
 
 namespace
 {
-	constexpr bool debugNiagaraDraw = false;
+	constexpr bool DEBUG_NIAGARA_DRAW = true;
 
 	constexpr float MAP_HEIGHT_METERS = Cartograph::MAX_HEIGHT_METERS - Cartograph::MIN_HEIGHT_METERS;
 }
@@ -63,7 +65,7 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	UNiagaraComponent* Niagara = NewObject<UNiagaraComponent>(this);
 	Niagara->SetAsset(GameInstanceModule->NiagaraSystem.LoadSynchronous());
 	Niagara->SetAutoActivate(false);
-	if (!debugNiagaraDraw)
+	if (!DEBUG_NIAGARA_DRAW)
 	{
 		Niagara->SetOnlyOwnerSee(true);
 	}

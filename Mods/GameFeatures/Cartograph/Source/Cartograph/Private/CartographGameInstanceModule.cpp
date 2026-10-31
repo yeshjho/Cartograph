@@ -2,22 +2,17 @@
 
 #include <sstream>
 
-#include "Algo/FindLast.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
+#include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Engine/GameInstance.h"
-#include "Misc/OutputDeviceNull.h"
 
 #include "FGBuildableBeam.h"
 #include "FGBuildableSubsystem.h"
-#include "FGBuildCategory.h"
-#include "FGBuildSubCategory.h"
 #include "FGLightweightBuildableSubsystem.h"
-#include "FGPlayerController.h"
-#include "FGSaveSession.h"
 #include "FGSplineBuildableInterface.h"
 #include "Buildables/FGBuildable.h"
 #include "Buildables/FGBuildableWire.h"
@@ -30,7 +25,6 @@
 
 #include "CartographBuildingDataSubsystem.h"
 #include "CartographMapDrawSubsystem.h"
-#include "CartographRemoteCallObject.h"
 #include "Cartograph_ConfigStruct.h"
 
 
@@ -355,9 +349,9 @@ void UCartographGameInstanceModule::GatherBuildables()
 			Icon = DescriptorInstance->mPersistentBigIcon;
 		}
 
-        ClassPtrToDescriptorDataMap.Add(BuildableClass, FBuildingDescriptorData{
-			.Category = DescriptorInstance->mCategory,
-			.SubCategory = BuildSubCategory,
+        ClassPtrToDescriptorDataMap.Add(BuildableClass.Get(), FBuildingDescriptorData{
+			.Category = DescriptorInstance->mCategory.Get(),
+			.SubCategory = BuildSubCategory.Get(),
 			.Icon = Icon,
         });
 		
@@ -396,7 +390,7 @@ void UCartographGameInstanceModule::GatherModOverrides()
 #define VAR(x) std::make_pair(std::ref(x), FName{ #x })
 	const auto OverrideableVariables = std::make_tuple(
 		VAR(BuildCategoryDataMap), VAR(BuildableBuildCategoryDataOverrideMap), VAR(MaterialBuildCategoryDataOverrideMap),
-		VAR(BuildableIconOverrideMap), VAR(BuildableSizeOverrideMap), VAR(BuildableExtraRotationMap),
+		VAR(BuildableSizeOverrideMap),
 		VAR(BuildableSplineDataMap), VAR(BuildableWireDataMap),
 		VAR(BuildableClassRedirectMap), VAR(BuildableToIgnore),
 		/*VAR(LayerCategories),*/ VAR(BuildLayerDataMap), VAR(BuildableBuildLayerDataOverrideMap), VAR(MaterialBuildLayerDataOverrideMap));

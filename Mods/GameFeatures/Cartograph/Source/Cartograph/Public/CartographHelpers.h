@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "UObject/SoftObjectPtr.h"
 
+#include "Buildables/FGBuildable.h"
+
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCartograph, Display, All);
 
@@ -39,8 +41,6 @@ namespace Cartograph
 #define CARTO_LOG_ERROR_BREAK_IF_NULL(ptr) CARTO_LOG_ERROR_DO_IF_NULL(ptr, break)
 #define CARTO_LOG_ERROR_CONTINUE_IF_NULL(ptr) CARTO_LOG_ERROR_DO_IF_NULL(ptr, continue)
 
-
-class AFGBuildable;
 
 namespace Cartograph
 {

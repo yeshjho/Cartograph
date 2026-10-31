@@ -1,17 +1,19 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Module/GameInstanceModule.h"
+#include "NiagaraSystem.h"
 
-#include "CartographDataStructure.h"
+#include "Buildables/FGBuildable.h"
+#include "FGBuildCategory.h"
+#include "FGBuildSubCategory.h"
+
 #include "CartographHelpers.h"
 
 #include "CartographGameInstanceModule.generated.h"
 
 
-class AFGBuildable;
-class UFGBuildCategory;
-class UFGBuildSubCategory;
 class UFGBuildingDescriptor;
 class UFGCategory;
 class UFGFactoryCustomizationDescriptor_Material;
@@ -110,7 +112,7 @@ struct FBuildingDescriptorData
 	GENERATED_BODY()
 
 	UPROPERTY(EditDefaultsOnly)
-	TSoftClassPtr<UFGCategory> Category;
+	TSoftClassPtr<UFGBuildCategory> Category;
 
 	UPROPERTY(EditDefaultsOnly)
 	TSoftClassPtr<UFGBuildSubCategory> SubCategory;
@@ -240,7 +242,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
 	FCategoryData UnspecifiedCategoryData;
 
-	// SegmentsConfigName should be None.
 	UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
 	FSplineData UnspecifiedSplineData;
 

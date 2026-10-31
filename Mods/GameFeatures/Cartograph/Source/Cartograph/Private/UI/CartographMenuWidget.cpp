@@ -79,7 +79,7 @@ void UCartographMenuWidget::InitializeLayers()
             continue;
 	    }
 
-        if (BuildableClassRedirectMap.Contains(BuildableClass.Get()))
+        if (BuildableClassRedirectMap.Contains(BuildableClass))
 	    {
 		    continue;
 	    }
@@ -87,21 +87,21 @@ void UCartographMenuWidget::InitializeLayers()
         const uint32* ClassHash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass);
         if (!ClassHash)
         {
-            CARTO_LOG_ERROR("Can't find hash for %s", *BuildableClass->GetName());
+            CARTO_LOG_ERROR("Can't find hash for %s", *BuildableClass.LoadSynchronous()->GetName());
             continue;
         }
 
         const FBuildLayerData* LayerData = UCartographGameInstanceModule::Instance->GetBuildLayerData(*ClassHash);
         if (!LayerData)
         {
-            CARTO_LOG_WARNING("Can't find layer data for %s", *BuildableClass->GetName());
+            CARTO_LOG_WARNING("Can't find layer data for %s", *BuildableClass.LoadSynchronous()->GetName());
             continue;
         }
 
         const auto* DescriptorData = UCartographGameInstanceModule::Instance->ClassPtrToDescriptorDataMap.Find(BuildableClass);
         if (!DescriptorData)
         {
-            CARTO_LOG_WARNING("Can't find descriptor data for %s", *BuildableClass->GetName());
+            CARTO_LOG_WARNING("Can't find descriptor data for %s", *BuildableClass.LoadSynchronous()->GetName());
             continue;
         }
         UTexture2D* Icon = DescriptorData->Icon.LoadSynchronous();

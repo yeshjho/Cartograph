@@ -65,10 +65,10 @@ protected:
 	float MinZFilter = Cartograph::MIN_HEIGHT_METERS;
 	float MaxZFilter = Cartograph::MAX_HEIGHT_METERS;
 
-	UPROPERTY(BlueprintRead)
+	UPROPERTY()
 	TObjectPtr<UCartographSceneCaptureComponent2D> SceneCaptureComponent;
 
-	UPROPERTY(BlueprintRead)
+	UPROPERTY()
 	TMap<uint32, TObjectPtr<UNiagaraComponent>> NiagaraComponentPerType;
 
 	// For blueprint use only
@@ -76,8 +76,8 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	bool DoShowBuildings = true;
 
-	UPROPERTY(BlueprintRead)
+	UPROPERTY(BlueprintReadOnly)
 	float MinHeight = Cartograph::MIN_HEIGHT_METERS;  // const
-	UPROPERTY(BlueprintRead)
+	UPROPERTY(BlueprintReadOnly)
 	float MaxHeight = Cartograph::MAX_HEIGHT_METERS;  // const
 };

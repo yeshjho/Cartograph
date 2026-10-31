@@ -1,4 +1,4 @@
-using UnrealBuildTool;
+﻿using UnrealBuildTool;
 using System.IO;
 using System;
 
@@ -35,7 +35,7 @@ public class Cartograph : ModuleRules
 			"RenderCore",
 			"CinematicCamera",
 			"Foliage",
-			//"Niagara",
+			"Niagara",
 			//"EnhancedInput",
 			//"GameplayCameras",
 			//"TemplateSequence",
