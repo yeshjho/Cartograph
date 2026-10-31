@@ -46,4 +46,7 @@ namespace Cartograph
 {
     bool IsBuildableIgnored(const TSoftClassPtr<AFGBuildable>& Type);
     TSoftClassPtr<AFGBuildable> GetRedirectedBuildableClass(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
+    uint32 GetHashWithRedirection(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
+    FVector GetBuildingSize(const AFGBuildable* Buildable);
+    FVector GetBuildingSize(uint32 RedirectedClassHash);
 }

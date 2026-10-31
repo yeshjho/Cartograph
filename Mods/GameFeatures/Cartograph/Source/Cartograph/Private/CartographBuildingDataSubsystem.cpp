@@ -265,7 +265,7 @@ void ACartographBuildingDataSubsystem::AddLightweightBuildable(const FFGDynamicS
 
 void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftClassPtr<AFGBuildable>& BuildableClass, const uint32 ArrayIndex)
 {
-	const uint32 TypeHash = FBuildingData::GetHashWithRedirection(BuildableClass);
+	const uint32 TypeHash = Cartograph::GetHashWithRedirection(BuildableClass);
 	if (TypeHash == 0)
 	{
 		return;
@@ -331,13 +331,13 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 				continue;
 			}
 
-			const TArray<FVector>* SplinePoints = std::get_if<TArray<FVector>>(&BuildingData.TransformOrSplinePoints);
-			CARTO_LOG_ERROR_CONTINUE_IF_NULL(SplinePoints);
+			const FSplineBuildingData* SplineData = std::get_if<FSplineBuildingData>(&BuildingData.CuboidOrSplineData);
+			CARTO_LOG_ERROR_CONTINUE_IF_NULL(SplineData);
 
-			const int Size = SplinePoints->Num();
+			const int Size = SplineData->Points.Num();
 			for (int i = 0; i < Size; i++)
 			{
-				PositionsParam.Add((*SplinePoints)[i]);
+				PositionsParam.Add(SplineData->Points[i]);
 				SplineGroupIdsParam.Add(SplineIndex);
 				SplineOrdersParam.Add(static_cast<float>(i));
 			}
@@ -362,12 +362,14 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 				continue;
 			}
 
-			const FTransform* Transform = std::get_if<FTransform>(&BuildingData.TransformOrSplinePoints);
-			CARTO_LOG_ERROR_CONTINUE_IF_NULL(Transform);
+			const FCuboidBuildingData* CuboidData = std::get_if<FCuboidBuildingData>(&BuildingData.CuboidOrSplineData);
+			CARTO_LOG_ERROR_CONTINUE_IF_NULL(CuboidData);
 
-			PositionsParam.Add(Transform->GetLocation());
-			RotationsParam.Add(Transform->GetRotation());
-			ScalesParam.Add(Transform->GetScale3D());
+			const FTransform& Transform = CuboidData->Transform;
+
+			PositionsParam.Add(Transform.GetLocation());
+			RotationsParam.Add(Transform.GetRotation());
+			ScalesParam.Add(Transform.GetScale3D());
 		}
 
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);

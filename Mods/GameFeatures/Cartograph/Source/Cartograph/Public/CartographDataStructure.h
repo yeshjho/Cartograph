@@ -19,6 +19,18 @@ namespace Cartograph
 }
 
 
+struct FCuboidBuildingData
+{
+	FTransform Transform;
+};
+
+
+struct FSplineBuildingData
+{
+	TArray<FVector> Points;
+};
+
+
 USTRUCT()
 struct FBuildingData : public FFastArraySerializerItem
 {
@@ -29,20 +41,14 @@ struct FBuildingData : public FFastArraySerializerItem
 	FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType);
 
 	uint32 BuildableClassHash = 0;  // Redirection is applied
-	std::variant<FTransform, TArray<FVector>> TransformOrSplinePoints;
+	std::variant<FCuboidBuildingData, FSplineBuildingData> CuboidOrSplineData;
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
-
-	static uint32 GetHashWithRedirection(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
-	static FVector GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass);
 
 private:
 	void FillTransformOrSplinePoints(FTransform Transform, const AFGBuildable* Buildable);
 	void FillTransformOrSplinePoints(FTransform Transform, const FFGDynamicStruct& TypeSpecificData);
 };
-
-
-FArchive& operator<<(FArchive& Ar, FBuildingData& BuildingData);
 
 
 template<>

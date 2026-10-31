@@ -109,7 +109,14 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 			return nullptr;
 		}
 
-		Niagara->SetVectorParameter("User.Extent", /*TODO: Have a static map*/);
+		if (GameInstanceModule->VariableSizeBuildable.Contains(*ClassPtr))
+		{
+			Niagara->SetVectorParameter("User.Extent", FVector::OneVector);  // Will be driven by scale
+		}
+		else
+		{
+			Niagara->SetVectorParameter("User.Extent", Cartograph::GetBuildingSize(ClassHash));
+		}
 
 		Niagara->SetColorParameter("User.FillColor", CategoryData->MainColor);
 		Niagara->SetColorParameter("User.BorderColor", CategoryData->OutlineColor);
