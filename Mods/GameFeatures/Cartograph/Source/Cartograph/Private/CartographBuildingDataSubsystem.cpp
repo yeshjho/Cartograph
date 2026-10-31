@@ -265,7 +265,7 @@ void ACartographBuildingDataSubsystem::AddLightweightBuildable(const FFGDynamicS
 
 void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftClassPtr<AFGBuildable>& BuildableClass, const uint32 ArrayIndex)
 {
-	const uint32 TypeHash = FBuildingData::GetHash(BuildableClass);
+	const uint32 TypeHash = FBuildingData::GetHashWithRedirection(BuildableClass);
 	if (TypeHash == 0)
 	{
 		return;

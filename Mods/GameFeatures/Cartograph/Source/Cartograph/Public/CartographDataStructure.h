@@ -33,7 +33,7 @@ struct FBuildingData : public FFastArraySerializerItem
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
-	static uint32 GetHash(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
+	static uint32 GetHashWithRedirection(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
 	static FVector GetBuildingSize(const TSubclassOf<AFGBuildable>& BuildableClass);
 
 private:

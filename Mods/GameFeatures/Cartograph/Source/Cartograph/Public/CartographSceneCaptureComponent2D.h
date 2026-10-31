@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 
+#include "CartographSceneCaptureComponent2D.generated.h"
+
 
 UCLASS()
 class UCartographSceneCaptureComponent2D : public USceneCaptureComponent2D

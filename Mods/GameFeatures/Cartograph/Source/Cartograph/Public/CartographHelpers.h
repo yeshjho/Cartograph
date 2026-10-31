@@ -45,4 +45,5 @@ class AFGBuildable;
 namespace Cartograph
 {
     bool IsBuildableIgnored(const TSoftClassPtr<AFGBuildable>& Type);
+    TSoftClassPtr<AFGBuildable> GetRedirectedBuildableClass(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass);
 }

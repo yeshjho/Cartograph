@@ -468,8 +468,7 @@ void UCartographGameInstanceModule::FillBuildLayerDataCache()
 			continue;
 		}
 
-		const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-		const TSoftClassPtr<AFGBuildable> BuildableClass = RedirectClass ? *RedirectClass : OriginalBuildableClass;
+		const TSoftClassPtr<AFGBuildable> BuildableClass = Cartograph::GetRedirectedBuildableClass(OriginalBuildableClass);
 
 		const uint32* BuildableClassHash = ClassPtrToClassIDMap.Find(BuildableClass);
 		if (!BuildableClassHash)

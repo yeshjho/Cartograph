@@ -19,14 +19,14 @@ FArchive& operator<<(FArchive& Ar, FBuildingData& BuildingData)
 
 
 FBuildingData::FBuildingData(FTransform Transform, const AFGBuildable* Buildable)
-	: BuildableClassHash(GetHash(Buildable->GetClass()))
+	: BuildableClassHash(GetHashWithRedirection(Buildable->GetClass()))
 {
 	FillTransformOrSplinePoints(std::move(Transform), Buildable);
 }
 
 
 FBuildingData::FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType)
-	: BuildableClassHash(GetHash(LightweightBuildableType))
+	: BuildableClassHash(GetHashWithRedirection(LightweightBuildableType))
 {
 	FillTransformOrSplinePoints(std::move(Transform), TypeSpecificData);
 }
@@ -108,11 +108,7 @@ bool FBuildingData::NetSerialize(FArchive& Ar, [[maybe_unused]] UPackageMap* Map
 
 void FBuildingData::FillTransformOrSplinePoints(FTransform Transform, const AFGBuildable* Buildable)
 {
-	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-
-	const TSoftClassPtr<AFGBuildable> Class = Buildable->GetClass();
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap.Find(Class);
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : Class.LoadSynchronous();
+	const TSubclassOf<AFGBuildable> BuildableClass = Cartograph::GetRedirectedBuildableClass(Buildable->GetClass()).LoadSynchronous();
 
 	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
 	{
@@ -165,11 +161,7 @@ void FBuildingData::FillInVisualBoxCache(const TSubclassOf<AFGBuildable>& Origin
 {
 	VisualBoxCache = FBox2D{ ForceInit };
 
-	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-
-	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-	const TSubclassOf<AFGBuildable> BuildableClass = RedirectClass ? RedirectClass->LoadSynchronous() : OriginalBuildableClass.Get();
+	const TSubclassOf<AFGBuildable> BuildableClass = Cartograph::GetRedirectedBuildableClass(Buildable->GetClass()).LoadSynchronous();
 
 	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
 	{
@@ -226,13 +218,11 @@ void FBuildingData::FillInVisualBoxCache(const TSubclassOf<AFGBuildable>& Origin
 }
 
 
-uint32 FBuildingData::GetHash(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass)
+uint32 FBuildingData::GetHashWithRedirection(const TSoftClassPtr<AFGBuildable>& OriginalBuildableClass)
 {
 	CARTO_LOG_ERROR_DO_IF_NULL(UCartographGameInstanceModule::Instance, return 0);
 
-	const auto& BuildableClassRedirectMap = UCartographGameInstanceModule::Instance->BuildableClassRedirectMap;
-	const TSoftClassPtr<AFGBuildable>* RedirectClass = BuildableClassRedirectMap.Find(OriginalBuildableClass.Get());
-	const TSoftClassPtr<AFGBuildable> BuildableClass = RedirectClass ? *RedirectClass : OriginalBuildableClass.Get();
+	const TSoftClassPtr<AFGBuildable> BuildableClass = Cartograph::GetRedirectedBuildableClass(OriginalBuildableClass);
 
 	if (const uint32* Hash = UCartographGameInstanceModule::Instance->ClassPtrToClassIDMap.Find(BuildableClass.Get()))
 	{
