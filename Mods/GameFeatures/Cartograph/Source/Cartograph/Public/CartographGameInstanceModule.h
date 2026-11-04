@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/TextureRenderTarget2D.h"
 #include "Module/GameInstanceModule.h"
 #include "NiagaraSystem.h"
 
@@ -12,15 +11,6 @@
 #include "CartographHelpers.h"
 
 #include "CartographGameInstanceModule.generated.h"
-
-
-class UFGBuildingDescriptor;
-class UFGCategory;
-class UFGFactoryCustomizationDescriptor_Material;
-class UNiagaraSystem;
-class UTexture2D;
-class UTextureRenderTarget2D;
-class UUserWidget;
 
 
 USTRUCT()
@@ -232,9 +222,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Unspecified Default Data")
 	FSplineData UnspecifiedSplineData;
-
-	UPROPERTY(EditDefaultsOnly, Category = "UI")
-	TSoftObjectPtr<UTextureRenderTarget2D> RenderTarget;
 
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftObjectPtr<UNiagaraSystem> NiagaraSystem;

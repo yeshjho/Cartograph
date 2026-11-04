@@ -19,6 +19,7 @@ namespace Cartograph
     constexpr double MAP_HEIGHT_CENTIMETERS = SOUTH_BOUND_CENTIMETERS - NORTH_BOUND_CENTIMETERS;
 
     // Damage border: [-244, 1997]
+    // Match with BPW_ZFilter
     constexpr float MIN_HEIGHT_METERS = -294;
     constexpr float MAX_HEIGHT_METERS = 2047;
 
