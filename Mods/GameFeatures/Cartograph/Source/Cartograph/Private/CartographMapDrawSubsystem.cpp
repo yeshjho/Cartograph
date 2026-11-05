@@ -17,8 +17,6 @@
 namespace
 {
 	constexpr bool DEBUG_NIAGARA_DRAW = true;
-
-	constexpr float MAP_HEIGHT_METERS = Cartograph::MAX_HEIGHT_METERS - Cartograph::MIN_HEIGHT_METERS;
 }
 
 
@@ -27,12 +25,21 @@ ACartographMapDrawSubsystem::ACartographMapDrawSubsystem()
     ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnClient;
     bReplicates = false;
 
-	CARTO_LOG_ERROR_RETURN_IF_NULL(UCartographGameInstanceModule::Instance);
-
 	SceneCaptureComponent = CreateDefaultSubobject<UCartographSceneCaptureComponent2D>("SceneCaptureComponent");
+	SceneCaptureComponent->SetupAttachment(GetRootComponent());
 	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Type::Orthographic;
+
 	SceneCaptureComponent->bCaptureEveryFrame = false;
-	SceneCaptureComponent->TextureTarget = UCartographGameInstanceModule::Instance->RenderTarget.LoadSynchronous();
+	SceneCaptureComponent->bCaptureOnMovement = false;
+
+	SceneCaptureComponent->bAutoCalculateOrthoPlanes = false;
+	SceneCaptureComponent->bUpdateOrthoPlanes = false;
+
+	SceneCaptureComponent->bUseCustomProjectionMatrix = true;
+
+	SceneCaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+
+	SceneCaptureComponent->SetWorldRotation(FRotator{ -90.f, -90.f, 0.f });
 }
 
 
@@ -123,9 +130,68 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 		Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
 	}
 
-	NiagaraComponentPerType[ClassHash] = Niagara;
+	NiagaraComponentPerType.Add(ClassHash, Niagara);
 
 	return Niagara;
+}
+
+
+void ACartographMapDrawSubsystem::OnMapOpen()
+{
+	IsMapBeingRendered = true;
+
+	if (IsMapTextureDirty)
+	{
+		RedrawMap();
+	}
+}
+
+
+void ACartographMapDrawSubsystem::OnMapClose()
+{
+	IsMapBeingRendered = false;
+}
+
+
+void ACartographMapDrawSubsystem::OnMapDisplaySizedChanged(const FVector2D& DisplaySizePixels)
+{
+	static constexpr int32 MAX_RENDER_TARGET_DIMENSION = 1024;
+	static constexpr float RENDER_TARGET_SUPERSAMPLING = 1.5f;
+
+	const FVector2D DesiredSize = DisplaySizePixels * RENDER_TARGET_SUPERSAMPLING;
+
+	const float Scale = FMath::Min(
+		1.f,
+		static_cast<float>(MAX_RENDER_TARGET_DIMENSION) / FMath::Max(DesiredSize.X, DesiredSize.Y)
+	);
+
+	const FIntPoint NewSize{
+		FMath::Max(1, static_cast<int>(FMath::RoundToInt(DesiredSize.X * Scale))),
+		FMath::Max(1, static_cast<int>(FMath::RoundToInt(DesiredSize.Y * Scale)))
+	};
+
+	if (RenderTarget &&
+		RenderTarget->SizeX == NewSize.X && RenderTarget->SizeY == NewSize.Y)
+	{
+		return;
+	}
+
+	if (!RenderTarget)
+	{
+		RenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("CartographMapRenderTarget"), RF_Transient);
+		RenderTarget->ClearColor = FLinearColor::Transparent;
+		RenderTarget->bAutoGenerateMips = false;
+		RenderTarget->Filter = TF_Bilinear;
+		RenderTarget->InitCustomFormat(NewSize.X, NewSize.Y, PF_B8G8R8A8, false);
+
+		SceneCaptureComponent->TextureTarget = RenderTarget;
+	}
+	else
+	{
+		RenderTarget->ResizeTarget(NewSize.X, NewSize.Y);
+	}
+
+	MarkMapTextureDirty();
 }
 
 
@@ -147,19 +213,92 @@ void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReas
 
 void ACartographMapDrawSubsystem::RedrawMap()
 {
-	// TODO: Setup position, width, near/far plane according to pan, zoom, z filter
-	SceneCaptureComponent->OrthoWidth;
+	if (!RenderTarget)
+	{
+		return;
+	}
 
-	// TODO: Hide/Unhide types
+	constexpr float Z_PADDING = 100.f;
+	constexpr float WORLD_CM_PER_PIXEL_AT_ZOOM_1_X = Cartograph::MAP_WIDTH_CENTIMETERS / 1024.f;
+	constexpr float WORLD_CM_PER_PIXEL_AT_ZOOM_1_Y = Cartograph::MAP_HEIGHT_CENTIMETERS / 1024.f;
+
+	const int32 TargetWidth = RenderTarget->SizeX;
+	const int32 TargetHeight = RenderTarget->SizeY;
+
+	const FVector2D WorldCmPerPixel = FVector2D{ WORLD_CM_PER_PIXEL_AT_ZOOM_1_X, WORLD_CM_PER_PIXEL_AT_ZOOM_1_Y } / ZoomScale;
+
+	const float OrthoWidth = WorldCmPerPixel.X * TargetWidth;
+	const float OrthoHeight = WorldCmPerPixel.Y * TargetHeight;
+
+	const FVector2D WorldCenter{
+		Cartograph::MAP_CENTER_WORLD_COORD_X + MapCenterWorldPosition.X * WORLD_CM_PER_PIXEL_AT_ZOOM_1_X,
+		Cartograph::MAP_CENTER_WORLD_COORD_Y + MapCenterWorldPosition.Y * WORLD_CM_PER_PIXEL_AT_ZOOM_1_Y
+	};
+
+	const float CameraZ = MaxZFilter + Z_PADDING;
+
+	SceneCaptureComponent->SetWorldLocation(FVector{ WorldCenter.X, WorldCenter.Y, CameraZ });
+
+	SceneCaptureComponent->OrthoWidth = OrthoWidth;
+
+	FMinimalViewInfo ProjectionInfo;
+	ProjectionInfo.ProjectionMode = ECameraProjectionMode::Orthographic;
+	ProjectionInfo.OrthoWidth = OrthoWidth;
+	ProjectionInfo.AspectRatio = OrthoWidth / OrthoHeight;
+	ProjectionInfo.bConstrainAspectRatio = false;
+
+	ProjectionInfo.OrthoNearClipPlane = Z_PADDING;
+	ProjectionInfo.OrthoFarClipPlane = CameraZ - MinZFilter;
+
+	ProjectionInfo.bAutoCalculateOrthoPlanes = false;
+	ProjectionInfo.bUpdateOrthoPlanes = false;
+
+	SceneCaptureComponent->CustomProjectionMatrix = ProjectionInfo.CalculateProjectionMatrix();
+
+	SceneCaptureComponent->ClearShowOnlyComponents();
+	SceneCaptureComponent->ShowOnlyActorComponents(this);
+
+	if (auto* GameInstanceModule = UCartographGameInstanceModule::Instance)
+	{
+		const FRuntimeConfig& RuntimeConfig = GameInstanceModule->RuntimeConfig;
+		for (const auto& [ClassHash, NiagaraComponent] : NiagaraComponentPerType)
+		{
+			if (RuntimeConfig.DisabledLayerBuildable.Contains(ClassHash))
+			{
+				SceneCaptureComponent->RemoveShowOnlyComponent(NiagaraComponent);
+				continue;
+			}
+
+			const auto* LayerData = GameInstanceModule->GetBuildLayerData(ClassHash);
+			if (!LayerData)
+			{
+				continue;
+			}
+
+			if (RuntimeConfig.DisabledLayerMainCategory.Contains(LayerData->MainCategoryCache))
+			{
+				SceneCaptureComponent->RemoveShowOnlyComponent(NiagaraComponent);
+			}
+			else if (const TSet<FName>* SubCategories = RuntimeConfig.DisabledLayerSubCategory.Find(LayerData->MainCategoryCache);
+					 SubCategories->Contains(LayerData->SubCategoryCache))
+			{
+				SceneCaptureComponent->RemoveShowOnlyComponent(NiagaraComponent);
+			}
+		}
+	}
 
 	SceneCaptureComponent->CaptureSceneDeferred();
+
+	IsMapTextureDirty = false;
 }
 
 
 void ACartographMapDrawSubsystem::OnZFilterUpdated(const float Min, const float Max)  // [0, 1]
 {
+	constexpr float MAP_HEIGHT_METERS = Cartograph::MAX_HEIGHT_METERS - Cartograph::MIN_HEIGHT_METERS;
+
 	MinZFilter = FMath::Floor(Min * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS);
-	MaxZFilter = FMath::CeilToInt(Max * MAP_HEIGHT_METERS + Cartograph::MAX_HEIGHT_METERS);
+	MaxZFilter = FMath::CeilToInt(Max * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS);
 
 	CARTO_LOG("Min is now %f and max is now %f", MinZFilter, MaxZFilter);
 
@@ -188,13 +327,6 @@ void ACartographMapDrawSubsystem::OnCartographMenuButtonClicked(UUserWidget* Wid
 }
 
 
-void ACartographMapDrawSubsystem::OnShowBuildingsCheckboxChanged(const bool DoShow)
-{
-	DoShowBuildings = DoShow;
-	CARTO_LOG("DoShowBuildings: %d", DoShowBuildings);
-}
-
-
 void ACartographMapDrawSubsystem::OnVanillaMapMenuShown(const UUserWidget* Widget) const
 {
 	UWidget* Menu = Widget->WidgetTree->FindWidget("CartographMenu");
@@ -213,19 +345,15 @@ void ACartographMapDrawSubsystem::OnVanillaMapMenuShown(const UUserWidget* Widge
 }
 
 
-void ACartographMapDrawSubsystem::OnMapOpen()
+void ACartographMapDrawSubsystem::OnZoomScaleChanged(const float NewScale)
 {
-	IsMapBeingRendered = true;
-
-	if (IsMapTextureDirty)
-	{
-		RedrawMap();
-		IsMapTextureDirty = false;
-	}
+	ZoomScale = NewScale;
+	MarkMapTextureDirty();
 }
 
 
-void ACartographMapDrawSubsystem::OnMapClose()
+void ACartographMapDrawSubsystem::OnPanChanged(const FVector2D NewMapCenterWorldPosition)
 {
-	IsMapBeingRendered = false;
+	MapCenterWorldPosition = NewMapCenterWorldPosition;
+	MarkMapTextureDirty();
 }

@@ -241,6 +241,11 @@ protected:
 #pragma endregion
 
 	TMap<uint32, const FBuildLayerData*> BuildLayerDataMapCache;
+
+	// For blueprint use only
+protected:
+	UPROPERTY(BlueprintReadWrite)
+	bool DoShowBuildings = true;
 };
 
 

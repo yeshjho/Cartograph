@@ -84,10 +84,12 @@ void ACartographBuildingDataSubsystem::OnAddFromBuildableInstanceData(const TSub
 
 	CARTO_LOG_VERBOSE("AddFromBuildableInstanceData: %s", *BuildableClass->GetName());
 
-	if (!Cartograph::IsBuildableIgnored(BuildableClass.Get()))
+	if (Cartograph::IsBuildableIgnored(BuildableClass.Get()))
 	{
-		AddLightweightBuildable(BuildableInstanceData.TypeSpecificData, InstanceIndex, BuildableInstanceData.Transform, BuildableClass.Get());
+		return;
 	}
+	
+	AddLightweightBuildable(BuildableInstanceData.TypeSpecificData, InstanceIndex, BuildableInstanceData.Transform, BuildableClass.Get());
 }
 
 
@@ -95,12 +97,14 @@ void ACartographBuildingDataSubsystem::OnAddFromReplicatedData(const AFGLightwei
 {
 	CARTO_LOG_VERBOSE("AddFromReplicatedData: %s", *BuildableClass->GetName());
 
-	if (!Cartograph::IsBuildableIgnored(BuildableClass.Get()))
+	if (Cartograph::IsBuildableIgnored(BuildableClass.Get()))
 	{
-		// TODO: Verify
-		const int32 InstanceIndex = ClassInstance->GetAllLightweightBuildableInstances().FindRef(BuildableClass).Num() - 1;
-		AddLightweightBuildable(ReplicationData.TypeSpecificData, InstanceIndex, ReplicationData.Transform, BuildableClass.Get());
+		return;
 	}
+
+	// TODO: Verify
+	const int32 InstanceIndex = ClassInstance->GetAllLightweightBuildableInstances().FindRef(BuildableClass).Num() - 1;
+	AddLightweightBuildable(ReplicationData.TypeSpecificData, InstanceIndex, ReplicationData.Transform, BuildableClass.Get());
 }
 
 
@@ -108,7 +112,7 @@ void ACartographBuildingDataSubsystem::OnRemoveBuildable(const AFGBuildable* Bui
 {
 	CARTO_LOG_VERBOSE("RemoveBuildable: %s", *Buildable->GetClass()->GetName());
 
-	if (!Cartograph::IsBuildableIgnored(Buildable->GetClass()))
+	if (Cartograph::IsBuildableIgnored(Buildable->GetClass()))
 	{
 		return;
 	}
@@ -128,13 +132,20 @@ void ACartographBuildingDataSubsystem::OnInvalidateRuntimeInstanceDataForIndex(c
 {
 	CARTO_LOG_VERBOSE("InvalidateRuntimeInstanceDataForIndex: %s", *BuildableClass->GetName());
 
-	if (!Cartograph::IsBuildableIgnored(BuildableClass.Get()))
+	if (Cartograph::IsBuildableIgnored(BuildableClass.Get()))
 	{
 		return;
 	}
 
+	TMap<int32, uint32>* TypeMap = LightweightBuildableToArrayIndex.Find(BuildableClass.Get());
+	if (!TypeMap)
+	{
+		CARTO_LOG_ERROR("Lightweight Buildable not found");
+		return;
+	}
+
 	uint32 ArrayIndex = 0;
-	if (!LightweightBuildableToArrayIndex[BuildableClass.Get()].RemoveAndCopyValue(Index, ArrayIndex))
+	if (!TypeMap->RemoveAndCopyValue(Index, ArrayIndex))
 	{
 		CARTO_LOG_ERROR("Lightweight Buildable not found");
 		return;
@@ -236,7 +247,7 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 
 void ACartographBuildingDataSubsystem::AddBuildable(const AFGBuildable* Buildable)
 {
-	if (!Cartograph::IsBuildableIgnored(Buildable->GetClass()))
+	if (Cartograph::IsBuildableIgnored(Buildable->GetClass()))
 	{
 		return;
 	}
@@ -244,10 +255,10 @@ void ACartographBuildingDataSubsystem::AddBuildable(const AFGBuildable* Buildabl
 	FBuildingData Data{ Buildable->GetTransform(), Buildable };
 
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
-	BuildingCountPerType[Data.BuildableClassHash]++;
+	BuildingCountPerType.FindOrAdd(Data.BuildableClassHash)++;
 
 	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
-	BuildableToArrayIndex[Buildable] = BuildingDataArray.Items.Num() - 1;
+	BuildableToArrayIndex.Add(Buildable, BuildingDataArray.Items.Num() - 1);
 }
 
 
@@ -256,10 +267,10 @@ void ACartographBuildingDataSubsystem::AddLightweightBuildable(const FFGDynamicS
 	FBuildingData Data{ Transform, TypeSpecificData, BuildableClass };
 
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
-	BuildingCountPerType[Data.BuildableClassHash]++;
+	BuildingCountPerType.FindOrAdd(Data.BuildableClassHash)++;
 
 	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
-	LightweightBuildableToArrayIndex[BuildableClass.Get()][InstanceIndex] = BuildingDataArray.Items.Num() - 1;
+	LightweightBuildableToArrayIndex.FindOrAdd(BuildableClass.Get()).Add(InstanceIndex, BuildingDataArray.Items.Num() - 1);
 }
 
 
@@ -283,7 +294,7 @@ void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftCl
 		}
 	}
 
-	BuildingCountPerType[TypeHash]--;
+	BuildingCountPerType.FindOrAdd(TypeHash)--;
 }
 
 void ACartographBuildingDataSubsystem::SendDataToNiagara()
@@ -375,6 +386,23 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayQuat(Niagara, "User.Rotations", RotationsParam);
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayVector(Niagara, "User.Scales", ScalesParam);
+
+		if constexpr (Cartograph::ENABLE_DEBUG_LOG)
+		{
+			CARTO_LOG_DEBUG("Niagara Data: %s", *GameInstanceModule->ClassIDToClassPtrMap[DirtyType].LoadSynchronous()->GetName());
+			for (const FVector& Position : PositionsParam)
+			{
+				CARTO_LOG_DEBUG("Position: %s", *Position.ToString());
+			}
+			for (const FQuat& Rotation : RotationsParam)
+			{
+				CARTO_LOG_DEBUG("Rotation: %s", *Rotation.ToString());
+			}
+			for (const FVector& Scale : ScalesParam)
+			{
+				CARTO_LOG_DEBUG("Scale: %s", *Scale.ToString());
+			}
+		}
 	}
 
 	MapDrawSubsystem->MarkMapTextureDirty();

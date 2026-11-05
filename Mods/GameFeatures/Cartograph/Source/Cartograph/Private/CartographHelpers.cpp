@@ -67,7 +67,9 @@ FVector Cartograph::GetBuildingSize(const AFGBuildable* Buildable)
 		{
 			if (ShouldCache)
 			{
-				CARTO_LOG_DEBUG("Calculated and cached building size from Clearance Box: %s", *BuildableClass.LoadSynchronous()->GetName());
+				CARTO_LOG_DEBUG("Calculated and cached building size from Clearance Box: %s, %s", 
+					*BuildableClass.LoadSynchronous()->GetName(),
+					*Size.ToString());
 				UCartographGameInstanceModule::Instance->BuildableSizeOverrideMap.Add(BuildableClass, Size);
 			}
 
@@ -138,7 +140,9 @@ FVector Cartograph::GetBuildingSize(const AFGBuildable* Buildable)
 		{
 			if (ShouldCache)
 			{
-				CARTO_LOG_DEBUG("Calculated and cached building size from USceneComponent Bounds: %s", *BuildableClass->GetName());
+				CARTO_LOG_DEBUG("Calculated and cached building size from USceneComponent Bounds: %s, %s", 
+					*BuildableClass->GetName(),
+					*Size.ToString());
 				UCartographGameInstanceModule::Instance->BuildableSizeOverrideMap.Add(BuildableClass, Size);
 			}
 			return Size;
