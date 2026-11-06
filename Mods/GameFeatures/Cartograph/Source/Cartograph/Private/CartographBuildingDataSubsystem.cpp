@@ -9,6 +9,7 @@
 #include "CartographGameInstanceModule.h"
 #include "CartographHelpers.h"
 #include "CartographMapDrawSubsystem.h"
+#include "NiagaraComponent.h"
 #include "Buildables/FGBuildable.h"
 
 
@@ -294,6 +295,17 @@ void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftCl
 		}
 	}
 
+	for (auto& [_, IndexMap] : LightweightBuildableToArrayIndex)
+	{
+		for (auto& It : IndexMap)
+		{
+			if (It.Value > ArrayIndex)
+			{
+				It.Value--;
+			}
+		}
+	}
+
 	BuildingCountPerType.FindOrAdd(TypeHash)--;
 }
 
@@ -404,6 +416,9 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 			}
 		}
 	}
+
+	Niagara->DeactivateImmediate();
+	Niagara->Activate(true);
 
 	MapDrawSubsystem->MarkMapTextureDirty();
 }

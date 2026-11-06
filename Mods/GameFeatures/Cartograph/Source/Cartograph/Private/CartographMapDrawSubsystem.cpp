@@ -23,23 +23,7 @@ namespace
 ACartographMapDrawSubsystem::ACartographMapDrawSubsystem()
 {
     ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnClient;
-    bReplicates = false;
-
-	SceneCaptureComponent = CreateDefaultSubobject<UCartographSceneCaptureComponent2D>("SceneCaptureComponent");
-	SceneCaptureComponent->SetupAttachment(GetRootComponent());
-	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Type::Orthographic;
-
-	SceneCaptureComponent->bCaptureEveryFrame = false;
-	SceneCaptureComponent->bCaptureOnMovement = false;
-
-	SceneCaptureComponent->bAutoCalculateOrthoPlanes = false;
-	SceneCaptureComponent->bUpdateOrthoPlanes = false;
-
-	SceneCaptureComponent->bUseCustomProjectionMatrix = true;
-
-	SceneCaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-
-	SceneCaptureComponent->SetWorldRotation(FRotator{ -90.f, -90.f, 0.f });
+	bReplicates = false;
 }
 
 
@@ -69,17 +53,17 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	const TSoftClassPtr<AFGBuildable>* ClassPtr = GameInstanceModule->ClassIDToClassPtrMap.Find(ClassHash);
 	CARTO_LOG_ERROR_DO_IF_NULL(ClassPtr, return nullptr);
 
-	UNiagaraComponent* Niagara = NewObject<UNiagaraComponent>(this);
+	UNiagaraComponent* Niagara = NewObject<UNiagaraComponent>(NiagaraActor);
+	NiagaraActor->AddInstanceComponent(Niagara);
+	Niagara->SetupAttachment(NiagaraActorRoot);
+
 	Niagara->SetAsset(GameInstanceModule->NiagaraSystem.LoadSynchronous());
 	Niagara->SetAutoActivate(false);
 	if (!DEBUG_NIAGARA_DRAW)
 	{
 		Niagara->SetOnlyOwnerSee(true);
 	}
-	Niagara->SetupAttachment(RootComponent);
-
 	Niagara->SetWorldLocation(FVector::ZeroVector);
-	Niagara->bNeverDistanceCull = true;
 
 	Niagara->RegisterComponent();
 	Niagara->Activate(true);
@@ -200,12 +184,51 @@ void ACartographMapDrawSubsystem::BeginPlay()
 	Super::BeginPlay();
 
     Instance = this;
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.ObjectFlags |= RF_Transient;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	NiagaraActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SpawnParams);
+	NiagaraActor->SetReplicates(false);
+	NiagaraActor->SetActorEnableCollision(false);
+	NiagaraActor->SetActorTickEnabled(false);
+	NiagaraActor->SetCanBeDamaged(false);
+
+	NiagaraActorRoot = NewObject<USceneComponent>(NiagaraActor, TEXT("NiagaraRoot"));
+
+	NiagaraActor->SetRootComponent(NiagaraActorRoot);
+	NiagaraActor->AddInstanceComponent(NiagaraActorRoot);
+	NiagaraActorRoot->RegisterComponent();
+
+
+	SceneCaptureComponent = NewObject<UCartographSceneCaptureComponent2D>(NiagaraActor, "SceneCaptureComponent");
+	NiagaraActor->AddInstanceComponent(SceneCaptureComponent);
+	SceneCaptureComponent->SetupAttachment(NiagaraActorRoot);
+
+	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Type::Orthographic;
+
+	SceneCaptureComponent->bCaptureEveryFrame = false;
+	SceneCaptureComponent->bCaptureOnMovement = false;
+
+	SceneCaptureComponent->bAutoCalculateOrthoPlanes = false;
+	SceneCaptureComponent->bUpdateOrthoPlanes = false;
+
+	SceneCaptureComponent->bUseCustomProjectionMatrix = true;
+
+	SceneCaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+
+	SceneCaptureComponent->SetWorldRotation(FRotator{ -90.f, -90.f, 0.f });
+
+	SceneCaptureComponent->RegisterComponent();
 }
 
 
 void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     Instance = nullptr;
+
+	NiagaraActor->Destroy();
 
 	Super::EndPlay(EndPlayReason);
 }

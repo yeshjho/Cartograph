@@ -79,11 +79,17 @@ protected:
 	FVector2D MapCenterWorldPosition = { Cartograph::MAP_CENTER_WORLD_COORD_X, Cartograph::MAP_CENTER_WORLD_COORD_Y };
 
 	UPROPERTY()
-	TObjectPtr<UCartographSceneCaptureComponent2D> SceneCaptureComponent;
-
-	UPROPERTY()
 	TObjectPtr<UTextureRenderTarget2D> RenderTarget;
 
 	UPROPERTY()
+	TObjectPtr<AActor> NiagaraActor;
+
+	UPROPERTY()
+	TObjectPtr<USceneComponent> NiagaraActorRoot;
+
+	UPROPERTY()
 	TMap<uint32, TObjectPtr<UNiagaraComponent>> NiagaraComponentPerType;
+
+	UPROPERTY()
+	TObjectPtr<UCartographSceneCaptureComponent2D> SceneCaptureComponent;
 };
