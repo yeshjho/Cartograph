@@ -264,6 +264,8 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 	LightweightBuildableToArrayIndex.Empty();
 	DirtyTypes.Empty();
 
+	BuildingDataArray.Items.Reserve(Total);
+
 	for (const AFGBuildable* Buildable : Buildables)
 	{
 		AddBuildable(Buildable);

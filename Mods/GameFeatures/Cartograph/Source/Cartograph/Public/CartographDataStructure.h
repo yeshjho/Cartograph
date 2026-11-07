@@ -16,6 +16,8 @@ struct FFGDynamicStruct;
 namespace Cartograph
 {
 	constexpr int MAX_SPLINE_POINT_COUNT = 24;
+	constexpr int MAX_SPLINE_POINT_COUNT_DIVISION_FACTOR_FOR_REPLICATION = 3;
+	constexpr int MAX_SPLINE_POINT_COUNT_FOR_REPLICATION = MAX_SPLINE_POINT_COUNT / MAX_SPLINE_POINT_COUNT_DIVISION_FACTOR_FOR_REPLICATION;
 }
 
 
@@ -47,6 +49,8 @@ struct FBuildingData : public FFastArraySerializerItem
 	std::variant<FCuboidBuildingData, FSplineBuildingData> CuboidOrSplineData;
 
 	std::variant<TObjectKey<AFGBuildable>, std::pair<TSoftClassPtr<AFGBuildable>, int32>> BuildingKey;  // Server-only
+
+	static constexpr int MAX_REPLICATION_SIZE_BITS = 32 + 1 + std::max(20 * 3 + 16, 8 + Cartograph::MAX_SPLINE_POINT_COUNT_FOR_REPLICATION * (20 * 3));
 
 private:
 	void FillTransformOrSplinePoints(FTransform Transform, const AFGBuildable* Buildable);

@@ -13,6 +13,13 @@
 class ACartographBuildingDataSubsystem;
 
 
+namespace Cartograph
+{
+	constexpr int MAX_RELIABLE_BUFFER_BITS = 65536 * 8;
+	constexpr int MAX_REPLICATED_ARRAY_LENGTH = MAX_RELIABLE_BUFFER_BITS / FBuildingData::MAX_REPLICATION_SIZE_BITS;
+}
+
+
 USTRUCT()
 struct FBuildingDataArray : public FFastArraySerializer
 {

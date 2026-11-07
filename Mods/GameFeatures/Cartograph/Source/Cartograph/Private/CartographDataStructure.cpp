@@ -68,17 +68,43 @@ bool FBuildingData::NetSerialize(FArchive& Ar, [[maybe_unused]] UPackageMap* Map
 		if (IsSerializing)
 		{
 			auto& SplinePoints = std::get<FSplineBuildingData>(CuboidOrSplineData).Points;
-			Num = static_cast<uint32>(SplinePoints.Num());
-			Ar.SerializeIntPacked(Num);
-			for (FVector& Point : SplinePoints)
+
+			const uint32 OriginalNum = static_cast<uint32>(SplinePoints.Num());
+			const bool NeedToSkipPoints = OriginalNum > Cartograph::MAX_SPLINE_POINT_COUNT_FOR_REPLICATION;
+			if (!NeedToSkipPoints)
 			{
-				bOutSuccess &= SerializePackedVector<1, 20>(Point, Ar);
+				Num = OriginalNum;
+			}
+			else
+			{
+				Num = OriginalNum / Cartograph::MAX_SPLINE_POINT_COUNT_DIVISION_FACTOR_FOR_REPLICATION;
+			}
+			Ar.SerializeIntPacked(Num);
+
+			if (!NeedToSkipPoints)
+			{
+				for (FVector& Point : SplinePoints)
+				{
+					bOutSuccess &= SerializePackedVector<1, 20>(Point, Ar);
+				}
+			}
+			else
+			{
+				const uint32 SourceIntervals = OriginalNum - 1;
+				const uint32 OutputIntervals = Num - 1;
+
+				for (uint32 i = 0; i < Num; ++i)
+				{
+					// Uniform degradation
+					const uint32 SourceIndex = (i * SourceIntervals + OutputIntervals / 2) / OutputIntervals;
+					bOutSuccess &= SerializePackedVector<1, 20>(SplinePoints[SourceIndex], Ar);
+				}
 			}
 		}
 		else
 		{
 			Ar.SerializeIntPacked(Num);
-			if (Num > Cartograph::MAX_SPLINE_POINT_COUNT)
+			if (Num > Cartograph::MAX_SPLINE_POINT_COUNT_FOR_REPLICATION)
 			{
 				Ar.SetError();
 				bOutSuccess = false;
