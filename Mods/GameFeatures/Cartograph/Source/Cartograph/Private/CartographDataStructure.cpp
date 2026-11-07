@@ -10,13 +10,15 @@
 
 FBuildingData::FBuildingData(FTransform Transform, const AFGBuildable* Buildable)
 	: BuildableClassHash(Cartograph::GetHashWithRedirection(Buildable->GetClass()))
+	, BuildingKey(TObjectKey<AFGBuildable>{ Buildable })
 {
 	FillTransformOrSplinePoints(std::move(Transform), Buildable);
 }
 
 
-FBuildingData::FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType)
+FBuildingData::FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType, int32 InstanceIndex)
 	: BuildableClassHash(Cartograph::GetHashWithRedirection(LightweightBuildableType))
+	, BuildingKey(std::make_pair(LightweightBuildableType, InstanceIndex))
 {
 	FillTransformOrSplinePoints(std::move(Transform), TypeSpecificData);
 }
@@ -30,14 +32,14 @@ bool FBuildingData::NetSerialize(FArchive& Ar, [[maybe_unused]] UPackageMap* Map
 
 	Ar.SerializeBits(&BuildableClassHash, 32);
 
-	bool IsCuboid = holds_alternative<FCuboidBuildingData>(CuboidOrSplineData);
+	bool IsCuboid = std::holds_alternative<FCuboidBuildingData>(CuboidOrSplineData);
 	Ar.SerializeBits(&IsCuboid, 1);
 
 	if (IsCuboid)
 	{
 		if (IsSerializing)
 		{
-			auto& CuboidData = get<FCuboidBuildingData>(CuboidOrSplineData);
+			auto& CuboidData = std::get<FCuboidBuildingData>(CuboidOrSplineData);
 
 			const FTransform& Transform = CuboidData.Transform;
 			FVector Location = Transform.GetLocation();
@@ -64,7 +66,7 @@ bool FBuildingData::NetSerialize(FArchive& Ar, [[maybe_unused]] UPackageMap* Map
 		uint32 Num = 0;
 		if (IsSerializing)
 		{
-			auto& SplinePoints = get<FSplineBuildingData>(CuboidOrSplineData).Points;
+			auto& SplinePoints = std::get<FSplineBuildingData>(CuboidOrSplineData).Points;
 			Num = static_cast<uint32>(SplinePoints.Num());
 			Ar.SerializeIntPacked(Num);
 			for (FVector& Point : SplinePoints)

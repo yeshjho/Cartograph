@@ -89,7 +89,7 @@ protected:
 	FBuildingDataArray BuildingDataArray;
 
 	TMap<TObjectKey<AFGBuildable>, uint32> BuildableToArrayIndex;  // Server-only
-	TMap<TSoftClassPtr<AFGBuildable>, TMap<int32, uint32>> LightweightBuildableToArrayIndex;  // Server-only
+	TMap<TSoftClassPtr<AFGBuildable>, TMap<int32 /*InstanceIndex*/, uint32>> LightweightBuildableToArrayIndex;  // Server-only
 
 	TMap<uint32, uint32> BuildingCountPerType;
 	TSet<uint32> DirtyTypes;

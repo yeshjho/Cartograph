@@ -265,7 +265,7 @@ void ACartographBuildingDataSubsystem::AddBuildable(const AFGBuildable* Buildabl
 
 void ACartographBuildingDataSubsystem::AddLightweightBuildable(const FFGDynamicStruct& TypeSpecificData, const int32 InstanceIndex, const FTransform& Transform, const TSoftClassPtr<AFGBuildable>& BuildableClass)
 {
-	FBuildingData Data{ Transform, TypeSpecificData, BuildableClass };
+	FBuildingData Data{ Transform, TypeSpecificData, BuildableClass, InstanceIndex };
 
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
 	BuildingCountPerType.FindOrAdd(Data.BuildableClassHash)++;
@@ -284,27 +284,22 @@ void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftCl
 	}
 
 	OnBuildingDataInvalidated(TypeHash);
-	BuildingDataArray.Items.RemoveAt(ArrayIndex);
+	if (const int LastIndex = BuildingDataArray.Items.Num() - 1;
+		ArrayIndex != LastIndex)
+	{
+		const auto& BuildingKey = BuildingDataArray.Items[LastIndex].BuildingKey;
+		if (const auto* BuildableKey = std::get_if<TObjectKey<AFGBuildable>>(&BuildingKey))
+		{
+			BuildableToArrayIndex[*BuildableKey] = ArrayIndex;
+		}
+		else
+		{
+			const auto& [Type, InstanceIndex] = std::get<std::pair<TSoftClassPtr<AFGBuildable>, int32>>(BuildingKey);
+			LightweightBuildableToArrayIndex[Type][InstanceIndex] = ArrayIndex;
+		}
+	}
+	BuildingDataArray.Items.RemoveAtSwap(ArrayIndex);
 	BuildingDataArray.MarkArrayDirty();
-
-	for (auto& It : BuildableToArrayIndex)
-	{
-		if (It.Value > ArrayIndex)
-		{
-			It.Value--;
-		}
-	}
-
-	for (auto& [_, IndexMap] : LightweightBuildableToArrayIndex)
-	{
-		for (auto& It : IndexMap)
-		{
-			if (It.Value > ArrayIndex)
-			{
-				It.Value--;
-			}
-		}
-	}
 
 	BuildingCountPerType.FindOrAdd(TypeHash)--;
 }

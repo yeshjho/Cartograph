@@ -38,12 +38,15 @@ struct FBuildingData : public FFastArraySerializerItem
 
 	FBuildingData() = default;
 	FBuildingData(FTransform Transform, const AFGBuildable* Buildable);
-	FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType);
+	FBuildingData(FTransform Transform, const FFGDynamicStruct& TypeSpecificData, const TSoftClassPtr<AFGBuildable>& LightweightBuildableType, int32 InstanceIndex);
+
+	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
+
 
 	uint32 BuildableClassHash = 0;  // Redirection is applied
 	std::variant<FCuboidBuildingData, FSplineBuildingData> CuboidOrSplineData;
 
-	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
+	std::variant<TObjectKey<AFGBuildable>, std::pair<TSoftClassPtr<AFGBuildable>, int32>> BuildingKey;  // Server-only
 
 private:
 	void FillTransformOrSplinePoints(FTransform Transform, const AFGBuildable* Buildable);
