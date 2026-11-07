@@ -114,6 +114,7 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 		Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
 	}
 
+	CARTO_LOG("Created a Niagara component for type %u", ClassHash);
 	NiagaraComponentPerType.Add(ClassHash, Niagara);
 
 	return Niagara;
@@ -221,6 +222,8 @@ void ACartographMapDrawSubsystem::BeginPlay()
 	SceneCaptureComponent->SetWorldRotation(FRotator{ -90.f, -90.f, 0.f });
 
 	SceneCaptureComponent->RegisterComponent();
+
+	CARTO_LOG("CartographMapDrawSubsystem BeginPlay, created Niagara actor and scene capture component");
 }
 
 
@@ -229,6 +232,8 @@ void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReas
     Instance = nullptr;
 
 	NiagaraActor->Destroy();
+
+	CARTO_LOG("CartographMapDrawSubsystem EndPlay, destroyed Niagara actor");
 
 	Super::EndPlay(EndPlayReason);
 }

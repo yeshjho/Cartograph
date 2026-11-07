@@ -28,6 +28,8 @@ struct FBuildingDataArray : public FFastArraySerializer
 	void PostReplicatedReceive(const FPostReplicatedReceiveParameters& Parameters);
 
 	TSet<uint32> DirtyTypes;
+
+	TSoftObjectPtr<ACartographBuildingDataSubsystem> Owner;
 };
 
 
@@ -54,6 +56,8 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void Tick(float DeltaSeconds) override;
+
+	void OnBuildableCountChangedFromReplication(uint32 ClassHash, int CountDelta);
 
 	void OnAddBuildable(const AFGBuildable* Buildable);
 	void OnAddFromBuildableInstanceData(const TSubclassOf<AFGBuildable>& BuildableClass, const FRuntimeBuildableInstanceData& BuildableInstanceData, bool FromSaveData, int32 InstanceIndex);

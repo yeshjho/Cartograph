@@ -59,6 +59,7 @@ bool FBuildingData::NetSerialize(FArchive& Ar, [[maybe_unused]] UPackageMap* Map
 			Rotation.SerializeCompressedShort(Ar);
 			//FVector Scale;
 			//bOutSuccess &= SerializePackedVector<10, 20>(Scale, Ar);
+			CuboidOrSplineData = FCuboidBuildingData{ .Transform = FTransform{ Rotation, Location/*, Scale */ } };
 		}
 	}
 	else

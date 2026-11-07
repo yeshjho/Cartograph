@@ -23,7 +23,9 @@ void FBuildingDataArray::PostReplicatedAdd(const TArrayView<int32>& AddedIndices
 {
 	for (const int32 Index : AddedIndices)
 	{
-		DirtyTypes.Add(Items[Index].BuildableClassHash);
+		const uint32 ClassHash = Items[Index].BuildableClassHash;
+		DirtyTypes.Add(ClassHash);
+		Owner->OnBuildableCountChangedFromReplication(ClassHash, 1);
 	}
 }
 
@@ -32,15 +34,25 @@ void FBuildingDataArray::PreReplicatedRemove(const TArrayView<int32>& RemovedInd
 {
 	for (const int32 Index : RemovedIndices)
 	{
-		DirtyTypes.Add(Items[Index].BuildableClassHash);
+		const uint32 ClassHash = Items[Index].BuildableClassHash;
+		DirtyTypes.Add(ClassHash);
+		Owner->OnBuildableCountChangedFromReplication(ClassHash, -1);
 	}
 }
 
 
 void FBuildingDataArray::PostReplicatedReceive(const FPostReplicatedReceiveParameters& Parameters)
 {
-	CARTO_LOG_ERROR_RETURN_IF_NULL(ACartographBuildingDataSubsystem::Instance);
-	ACartographBuildingDataSubsystem::Instance->OnBuildingDataInvalidated(DirtyTypes);
+	Owner->OnBuildingDataInvalidated(DirtyTypes);
+	
+	CARTO_LOG_VERBOSE("PostReplicatedReceive");
+	if constexpr (Cartograph::ENABLE_DEBUG_LOG)
+	{
+		for (const uint32 DirtyType : DirtyTypes)
+		{
+			CARTO_LOG_DEBUG("%u", DirtyType);
+		}
+	}
 	DirtyTypes.Reset();
 }
 
@@ -50,6 +62,8 @@ ACartographBuildingDataSubsystem::ACartographBuildingDataSubsystem()
     ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnServer_Replicate;
     bReplicates = true;
 	PrimaryActorTick.bCanEverTick = !FPlatformProperties::IsServerOnly();
+
+	BuildingDataArray.Owner = this;
 }
 
 
@@ -68,8 +82,19 @@ void ACartographBuildingDataSubsystem::Tick(const float DeltaSeconds)
 }
 
 
+void ACartographBuildingDataSubsystem::OnBuildableCountChangedFromReplication(const uint32 ClassHash, const int CountDelta)
+{
+	BuildingCountPerType.FindOrAdd(ClassHash) += CountDelta;
+}
+
+
 void ACartographBuildingDataSubsystem::OnAddBuildable(const AFGBuildable* Buildable)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	CARTO_LOG_VERBOSE("AddBuildable: %s", *Buildable->GetClass()->GetName());
 
 	AddBuildable(Buildable);
@@ -78,6 +103,11 @@ void ACartographBuildingDataSubsystem::OnAddBuildable(const AFGBuildable* Builda
 
 void ACartographBuildingDataSubsystem::OnAddFromBuildableInstanceData(const TSubclassOf<AFGBuildable>& BuildableClass, const FRuntimeBuildableInstanceData& BuildableInstanceData, const bool FromSaveData, const int32 InstanceIndex)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	if (FromSaveData)
 	{
 		return;
@@ -96,6 +126,11 @@ void ACartographBuildingDataSubsystem::OnAddFromBuildableInstanceData(const TSub
 
 void ACartographBuildingDataSubsystem::OnAddFromReplicatedData(const AFGLightweightBuildableSubsystem* ClassInstance, const TSubclassOf<AFGBuildable>& BuildableClass, const FLightweightBuildableReplicationItem& ReplicationData)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	CARTO_LOG_VERBOSE("AddFromReplicatedData: %s", *BuildableClass->GetName());
 
 	if (Cartograph::IsBuildableIgnored(BuildableClass.Get()))
@@ -103,7 +138,6 @@ void ACartographBuildingDataSubsystem::OnAddFromReplicatedData(const AFGLightwei
 		return;
 	}
 
-	// TODO: Verify
 	const int32 InstanceIndex = ClassInstance->GetAllLightweightBuildableInstances().FindRef(BuildableClass).Num() - 1;
 	AddLightweightBuildable(ReplicationData.TypeSpecificData, InstanceIndex, ReplicationData.Transform, BuildableClass.Get());
 }
@@ -111,6 +145,11 @@ void ACartographBuildingDataSubsystem::OnAddFromReplicatedData(const AFGLightwei
 
 void ACartographBuildingDataSubsystem::OnRemoveBuildable(const AFGBuildable* Buildable)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	CARTO_LOG_VERBOSE("RemoveBuildable: %s", *Buildable->GetClass()->GetName());
 
 	if (Cartograph::IsBuildableIgnored(Buildable->GetClass()))
@@ -131,6 +170,11 @@ void ACartographBuildingDataSubsystem::OnRemoveBuildable(const AFGBuildable* Bui
 
 void ACartographBuildingDataSubsystem::OnInvalidateRuntimeInstanceDataForIndex(const TSubclassOf<AFGBuildable>& BuildableClass, const int32 Index)
 {
+	if (!HasAuthority())
+	{
+		return;
+	}
+
 	CARTO_LOG_VERBOSE("InvalidateRuntimeInstanceDataForIndex: %s", *BuildableClass->GetName());
 
 	if (Cartograph::IsBuildableIgnored(BuildableClass.Get()))
@@ -178,6 +222,8 @@ void ACartographBuildingDataSubsystem::BeginPlay()
 {
 	Super::BeginPlay();
 
+	CARTO_LOG("CartographBuildingDataSubsystem BeginPlay");
+
 	if (HasAuthority())
 	{
 		GatherInitialBuildings();
@@ -190,6 +236,8 @@ void ACartographBuildingDataSubsystem::BeginPlay()
 void ACartographBuildingDataSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Instance = nullptr;
+
+	CARTO_LOG("CartographBuildingDataSubsystem EndPlay");
 
 	Super::EndPlay(EndPlayReason);
 }
