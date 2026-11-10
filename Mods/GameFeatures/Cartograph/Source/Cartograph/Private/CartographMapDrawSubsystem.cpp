@@ -24,6 +24,7 @@ ACartographMapDrawSubsystem::ACartographMapDrawSubsystem()
 {
     ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnClient;
 	bReplicates = false;
+	PrimaryActorTick.bCanEverTick = false;
 }
 
 
@@ -57,7 +58,6 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	NiagaraActor->AddInstanceComponent(Niagara);
 	Niagara->SetupAttachment(NiagaraActorRoot);
 
-	Niagara->SetAsset(GameInstanceModule->NiagaraSystem.LoadSynchronous());
 	Niagara->SetAutoActivate(false);
 	if (!DEBUG_NIAGARA_DRAW)
 	{
@@ -65,11 +65,10 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	}
 	Niagara->SetWorldLocation(FVector::ZeroVector);
 
-	Niagara->RegisterComponent();
-	Niagara->Activate(true);
-
 	if (GameInstanceModule->SplineBuildables.Contains(ClassHash))
 	{
+		Niagara->SetAsset(GameInstanceModule->SplineNiagaraSystem.LoadSynchronous());
+
 		const FSplineData* SplineData = GameInstanceModule->BuildableSplineDataMap.Find(*ClassPtr);
 		if (!SplineData && GameInstanceModule->ModdedBuildings.Contains(*ClassPtr))
 		{
@@ -86,6 +85,8 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 	}
 	else
 	{
+		Niagara->SetAsset(GameInstanceModule->NiagaraSystem.LoadSynchronous());
+
 		const FCategoryData* CategoryData = GameInstanceModule->GetDataByBuildableClass(
 			GameInstanceModule->BuildableBuildCategoryDataOverrideMap,
 			GameInstanceModule->BuildCategoryDataMap,
@@ -113,6 +114,8 @@ UNiagaraComponent* ACartographMapDrawSubsystem::GetNiagaraComponentPerType(const
 		Niagara->SetColorParameter("User.BorderColor", CategoryData->OutlineColor);
 		Niagara->SetFloatParameter("User.BorderThickness", CategoryData->OutlineThickness);
 	}
+
+	Niagara->RegisterComponent();
 
 	CARTO_LOG("Created a Niagara component for type %u", ClassHash);
 	NiagaraComponentPerType.Add(ClassHash, Niagara);

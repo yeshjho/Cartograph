@@ -131,13 +131,114 @@ void FBuildingData::FillTransformOrSplinePoints(FTransform Transform, const AFGB
 
 	if (BuildableClass->ImplementsInterface(UFGSplineBuildableInterface::StaticClass()))
 	{
+		constexpr float MAX_DEVIATION_CM = 25.0f;
+		constexpr float MAX_DEVIATION_SQUARED = MAX_DEVIATION_CM * MAX_DEVIATION_CM;
+
 		const auto* Spline = Cast<IFGSplineBuildableInterface>(Buildable);
 		const USplineComponent* SplineComponent = Spline->GetSplineComponent();
 		CARTO_LOG_ERROR_RETURN_IF_NULL(SplineComponent);
 
 		TArray<FVector> Points;
-		// TODO: Dynamic calculation so that sharp curves have more points
-		//Points.Add(SplineComponent->GetLocationAtTime(i * Step, ESplineCoordinateSpace::World, true));
+
+		struct FSegment
+		{
+			float StartDistance;
+			float EndDistance;
+			FVector StartLocation;
+			FVector EndLocation;
+			FVector Midpoint;
+			float ErrorSquared;
+		};
+
+		const float SplineLength = SplineComponent->GetSplineLength();
+		const FVector StartLocation = SplineComponent->GetLocationAtDistanceAlongSpline(0.0f, ESplineCoordinateSpace::World);
+		const FVector EndLocation = SplineComponent->GetLocationAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::World);
+
+		const auto MakeSegment = [SplineComponent](const float StartDistance, const float EndDistance, const FVector& SegmentStart, const FVector& SegmentEnd)
+			{
+				constexpr float TEST_ALPHAS[] = { 0.25f, 0.5f, 0.75f };
+
+				FSegment Segment{
+					.StartDistance = StartDistance,
+					.EndDistance = EndDistance,
+					.StartLocation = SegmentStart,
+					.EndLocation = SegmentEnd,
+					.Midpoint = FVector::ZeroVector,
+					.ErrorSquared = 0.0f
+				};
+
+				for (const float Alpha : TEST_ALPHAS)
+				{
+					const float Distance = FMath::Lerp(StartDistance, EndDistance, Alpha);
+
+					const FVector ActualLocation = SplineComponent->GetLocationAtDistanceAlongSpline(Distance, ESplineCoordinateSpace::World);
+					const FVector LinearLocation = FMath::Lerp(SegmentStart, SegmentEnd, Alpha);
+
+					if (const float ErrorSquared = FVector::DistSquared(ActualLocation, LinearLocation); 
+						ErrorSquared > Segment.ErrorSquared)
+					{
+						Segment.ErrorSquared = ErrorSquared;
+					}
+
+					if (Alpha == 0.5f)
+					{
+						Segment.Midpoint = ActualLocation;
+					}
+				}
+
+				return Segment;
+			};
+
+		TArray<FSegment> Segments;
+		Segments.Reserve(Cartograph::MAX_SPLINE_POINT_COUNT - 1);
+
+		Segments.Add(MakeSegment(0.0f, SplineLength, StartLocation, EndLocation));
+
+		while (Segments.Num() + 1 < Cartograph::MAX_SPLINE_POINT_COUNT)
+		{
+			int32 WorstSegmentIndex = INDEX_NONE;
+			float WorstErrorSquared = MAX_DEVIATION_SQUARED;
+
+			for (int32 i = 0; i < Segments.Num(); ++i)
+			{
+				if (Segments[i].ErrorSquared > WorstErrorSquared)
+				{
+					WorstErrorSquared = Segments[i].ErrorSquared;
+					WorstSegmentIndex = i;
+				}
+			}
+
+			if (WorstSegmentIndex == INDEX_NONE)
+			{
+				break;
+			}
+
+			const FSegment Segment = Segments[WorstSegmentIndex];
+			const float MidDistance = (Segment.StartDistance + Segment.EndDistance) * 0.5f;
+
+			FSegment Left = MakeSegment(
+				Segment.StartDistance,
+				MidDistance,
+				Segment.StartLocation,
+				Segment.Midpoint);
+
+			FSegment Right = MakeSegment(
+				MidDistance,
+				Segment.EndDistance,
+				Segment.Midpoint,
+				Segment.EndLocation);
+
+			Segments[WorstSegmentIndex] = std::move(Left);
+			Segments.Insert(std::move(Right), WorstSegmentIndex + 1);
+		}
+
+		Points.Reserve(Segments.Num() + 1);
+		Points.Add(StartLocation);
+
+		for (const FSegment& Segment : Segments)
+		{
+			Points.Add(Segment.EndLocation);
+		}
 
 		CuboidOrSplineData = FSplineBuildingData{ .Points = std::move(Points) };
 	}

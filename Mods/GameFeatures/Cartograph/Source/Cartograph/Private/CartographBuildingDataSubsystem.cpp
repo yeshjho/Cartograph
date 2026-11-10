@@ -362,6 +362,23 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayInt32(Niagara, "User.SplineGroupIds", SplineGroupIdsParam);
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayFloat(Niagara, "User.SplineOrders", SplineOrdersParam);
+
+		if constexpr (Cartograph::ENABLE_DEBUG_LOG)
+		{
+			CARTO_LOG_DEBUG("Niagara Data: %s", *GameInstanceModule->ClassIDToClassPtrMap[DirtyType].LoadSynchronous()->GetName());
+			for (const FVector& Position : PositionsParam)
+			{
+				CARTO_LOG_DEBUG("Position: %s", *Position.ToString());
+			}
+			for (const int32 GroupId : SplineGroupIdsParam)
+			{
+				CARTO_LOG_DEBUG("Spline Group Id: %d", GroupId);
+			}
+			for (const float Order : SplineOrdersParam)
+			{
+				CARTO_LOG_DEBUG("Spline Order: %f", Order);
+			}
+		}
 	}
 	else
 	{
@@ -411,7 +428,10 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 		}
 	}
 
-	Niagara->DeactivateImmediate();
+	if (Niagara->IsActive())
+	{
+		Niagara->DeactivateImmediate();
+	}
 	Niagara->Activate(true);
 
 	MapDrawSubsystem->MarkMapTextureDirty();

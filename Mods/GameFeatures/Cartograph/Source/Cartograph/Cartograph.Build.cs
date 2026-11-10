@@ -74,7 +74,7 @@ public class Cartograph : ModuleRules
 		});
 		
 		PrivateDependencyModuleNames.AddRange(new string[] {
-			"RHI"
+			//"RHI"
 		});
 		
 		DynamicallyLoadedModuleNames.AddRange(new string[] {
