@@ -10,7 +10,7 @@
 #include "CartographBuildingDataSubsystem.generated.h"
 
 
-class ACartographBuildingDataSubsystem;
+class ACartographBuildingDataHolder;
 
 
 namespace Cartograph
@@ -18,36 +18,6 @@ namespace Cartograph
 	constexpr int MAX_RELIABLE_BUFFER_BITS = 65536 * 8;
 	constexpr int MAX_REPLICATED_ARRAY_LENGTH = MAX_RELIABLE_BUFFER_BITS / FBuildingData::MAX_REPLICATION_SIZE_BITS;
 }
-
-
-USTRUCT()
-struct FBuildingDataArray : public FFastArraySerializer
-{
-	GENERATED_BODY()
-
-	UPROPERTY()
-	TArray<FBuildingData> Items;
-
-	bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams);
-
-	void PostReplicatedAdd(const TArrayView<int32>& AddedIndices, int32 FinalSize);
-	void PreReplicatedRemove(const TArrayView<int32>& RemovedIndices, int32 FinalSize);
-	void PostReplicatedReceive(const FPostReplicatedReceiveParameters& Parameters);
-
-	TSet<uint32> DirtyTypes;
-
-	TSoftObjectPtr<ACartographBuildingDataSubsystem> Owner;
-};
-
-
-template<>
-struct TStructOpsTypeTraits<FBuildingDataArray> : public TStructOpsTypeTraitsBase2<FBuildingDataArray>
-{
-	enum
-	{
-		WithNetDeltaSerializer = true
-	};
-};
 
 
 /**
@@ -61,7 +31,6 @@ class CARTOGRAPH_API ACartographBuildingDataSubsystem : public AModSubsystem
 public:
 	ACartographBuildingDataSubsystem();
 
-	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void Tick(float DeltaSeconds) override;
 
 	void OnBuildableCountChangedFromReplication(uint32 ClassHash, int CountDelta);
@@ -77,6 +46,9 @@ public:
 
 	bool DoesBuildingExist(uint32 ClassHash) const;
 
+	void OnBuildingDataHolderAddedFromReplication(ACartographBuildingDataHolder* Holder);
+	void OnBuildingDataHolderRemovedFromReplication(ACartographBuildingDataHolder* Holder);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -90,20 +62,26 @@ private:
 
 	void SendDataToNiagara();
 
+	void AddBuildingData(FBuildingData BuildingData);
+	void RemoveBuildingData(uint32 Index);
+
 
 public:
 	inline static ACartographBuildingDataSubsystem* Instance = nullptr;
 
 
 protected:
-	UPROPERTY(Replicated)
-	FBuildingDataArray BuildingDataArray;
+	UPROPERTY()
+	TArray<TObjectPtr<ACartographBuildingDataHolder>> BuildingDataHolders;  // Server-only
+	uint32 CurrentBuildingNum = 0;  // Server-only
 
 	TMap<TObjectKey<AFGBuildable>, uint32> BuildableToArrayIndex;  // Server-only
 	TMap<TSoftClassPtr<AFGBuildable>, TMap<int32 /*InstanceIndex*/, uint32>> LightweightBuildableToArrayIndex;  // Server-only
 
 	TMap<uint32, uint32> BuildingCountPerType;
 	TSet<uint32> DirtyTypes;
+
+	bool HasDataAuthority = false;
 
 	// Trade-off: Keeping as member variables not to allocate every time there's a modification.
 	// More memory, better performance.

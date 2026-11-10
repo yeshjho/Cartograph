@@ -1,11 +1,11 @@
 ﻿#include "CartographBuildingDataSubsystem.h"
 
-#include "Net/UnrealNetwork.h"
 #include "NiagaraDataInterfaceArrayFunctionLibrary.h"
 
 #include "FGBuildableSubsystem.h"
 #include "FGLightweightBuildableSubsystem.h"
 
+#include "CartographBuildingDataHolder.h"
 #include "CartographGameInstanceModule.h"
 #include "CartographHelpers.h"
 #include "CartographMapDrawSubsystem.h"
@@ -13,65 +13,11 @@
 #include "Buildables/FGBuildable.h"
 
 
-bool FBuildingDataArray::NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams)
-{
-	return FastArrayDeltaSerialize<FBuildingData, FBuildingDataArray>(Items, DeltaParams, *this);
-}
-
-
-void FBuildingDataArray::PostReplicatedAdd(const TArrayView<int32>& AddedIndices, int32 FinalSize)
-{
-	for (const int32 Index : AddedIndices)
-	{
-		const uint32 ClassHash = Items[Index].BuildableClassHash;
-		DirtyTypes.Add(ClassHash);
-		Owner->OnBuildableCountChangedFromReplication(ClassHash, 1);
-	}
-}
-
-
-void FBuildingDataArray::PreReplicatedRemove(const TArrayView<int32>& RemovedIndices, int32 FinalSize)
-{
-	for (const int32 Index : RemovedIndices)
-	{
-		const uint32 ClassHash = Items[Index].BuildableClassHash;
-		DirtyTypes.Add(ClassHash);
-		Owner->OnBuildableCountChangedFromReplication(ClassHash, -1);
-	}
-}
-
-
-void FBuildingDataArray::PostReplicatedReceive(const FPostReplicatedReceiveParameters& Parameters)
-{
-	Owner->OnBuildingDataInvalidated(DirtyTypes);
-	
-	CARTO_LOG_VERBOSE("PostReplicatedReceive");
-	if constexpr (Cartograph::ENABLE_DEBUG_LOG)
-	{
-		for (const uint32 DirtyType : DirtyTypes)
-		{
-			CARTO_LOG_DEBUG("%u", DirtyType);
-		}
-	}
-	DirtyTypes.Reset();
-}
-
-
 ACartographBuildingDataSubsystem::ACartographBuildingDataSubsystem()
 {
-    ReplicationPolicy = ESubsystemReplicationPolicy::SpawnOnServer_Replicate;
-    bReplicates = true;
+    ReplicationPolicy = ESubsystemReplicationPolicy::SpawnLocal;
+    bReplicates = false;
 	PrimaryActorTick.bCanEverTick = !FPlatformProperties::IsServerOnly();
-
-	BuildingDataArray.Owner = this;
-}
-
-
-void ACartographBuildingDataSubsystem::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
-{
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
-	DOREPLIFETIME(ACartographBuildingDataSubsystem, BuildingDataArray);
 }
 
 
@@ -90,7 +36,7 @@ void ACartographBuildingDataSubsystem::OnBuildableCountChangedFromReplication(co
 
 void ACartographBuildingDataSubsystem::OnAddBuildable(const AFGBuildable* Buildable)
 {
-	if (!HasAuthority())
+	if (!HasDataAuthority)
 	{
 		return;
 	}
@@ -103,7 +49,7 @@ void ACartographBuildingDataSubsystem::OnAddBuildable(const AFGBuildable* Builda
 
 void ACartographBuildingDataSubsystem::OnAddFromBuildableInstanceData(const TSubclassOf<AFGBuildable>& BuildableClass, const FRuntimeBuildableInstanceData& BuildableInstanceData, const bool FromSaveData, const int32 InstanceIndex)
 {
-	if (!HasAuthority())
+	if (!HasDataAuthority)
 	{
 		return;
 	}
@@ -126,7 +72,7 @@ void ACartographBuildingDataSubsystem::OnAddFromBuildableInstanceData(const TSub
 
 void ACartographBuildingDataSubsystem::OnAddFromReplicatedData(const AFGLightweightBuildableSubsystem* ClassInstance, const TSubclassOf<AFGBuildable>& BuildableClass, const FLightweightBuildableReplicationItem& ReplicationData)
 {
-	if (!HasAuthority())
+	if (!HasDataAuthority)
 	{
 		return;
 	}
@@ -145,7 +91,7 @@ void ACartographBuildingDataSubsystem::OnAddFromReplicatedData(const AFGLightwei
 
 void ACartographBuildingDataSubsystem::OnRemoveBuildable(const AFGBuildable* Buildable)
 {
-	if (!HasAuthority())
+	if (!HasDataAuthority)
 	{
 		return;
 	}
@@ -170,7 +116,7 @@ void ACartographBuildingDataSubsystem::OnRemoveBuildable(const AFGBuildable* Bui
 
 void ACartographBuildingDataSubsystem::OnInvalidateRuntimeInstanceDataForIndex(const TSubclassOf<AFGBuildable>& BuildableClass, const int32 Index)
 {
-	if (!HasAuthority())
+	if (!HasDataAuthority)
 	{
 		return;
 	}
@@ -218,18 +164,31 @@ bool ACartographBuildingDataSubsystem::DoesBuildingExist(const uint32 ClassHash)
 }
 
 
+void ACartographBuildingDataSubsystem::OnBuildingDataHolderAddedFromReplication(ACartographBuildingDataHolder* Holder)
+{
+	BuildingDataHolders.Add(Holder);
+}
+
+
+void ACartographBuildingDataSubsystem::OnBuildingDataHolderRemovedFromReplication(ACartographBuildingDataHolder* Holder)
+{
+	BuildingDataHolders.Remove(Holder);
+}
+
+
 void ACartographBuildingDataSubsystem::BeginPlay()
 {
 	Super::BeginPlay();
 
 	CARTO_LOG("CartographBuildingDataSubsystem BeginPlay");
 
-	if (HasAuthority())
+	Instance = this; 
+	HasDataAuthority = GetWorld()->GetNetMode() != NM_Client;
+
+	if (HasDataAuthority)
 	{
 		GatherInitialBuildings();
 	}
-
-	Instance = this;
 }
 
 
@@ -238,6 +197,11 @@ void ACartographBuildingDataSubsystem::EndPlay(const EEndPlayReason::Type EndPla
 	Instance = nullptr;
 
 	CARTO_LOG("CartographBuildingDataSubsystem EndPlay");
+
+	for (TObjectPtr<ACartographBuildingDataHolder>& DataHolder : BuildingDataHolders)
+	{
+		DataHolder->Destroy();
+	}
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -257,14 +221,6 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 	}
 
 	CARTO_LOG("InitialBuildableGather Started. Buildables: %d, LightweightBuildables: %d", Buildables.Num(), LightweightBuildablesCount);
-
-	const int Total = Buildables.Num() + LightweightBuildablesCount;
-	BuildingDataArray.Items.Empty(Total);
-	BuildableToArrayIndex.Empty();
-	LightweightBuildableToArrayIndex.Empty();
-	DirtyTypes.Empty();
-
-	BuildingDataArray.Items.Reserve(Total);
 
 	for (const AFGBuildable* Buildable : Buildables)
 	{
@@ -308,8 +264,8 @@ void ACartographBuildingDataSubsystem::AddBuildable(const AFGBuildable* Buildabl
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
 	BuildingCountPerType.FindOrAdd(Data.BuildableClassHash)++;
 
-	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
-	BuildableToArrayIndex.Add(Buildable, BuildingDataArray.Items.Num() - 1);
+	AddBuildingData(std::move(Data));
+	BuildableToArrayIndex.Add(Buildable, CurrentBuildingNum - 1);
 }
 
 
@@ -320,8 +276,8 @@ void ACartographBuildingDataSubsystem::AddLightweightBuildable(const FFGDynamicS
 	OnBuildingDataInvalidated(Data.BuildableClassHash);
 	BuildingCountPerType.FindOrAdd(Data.BuildableClassHash)++;
 
-	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(Data)));
-	LightweightBuildableToArrayIndex.FindOrAdd(BuildableClass.Get()).Add(InstanceIndex, BuildingDataArray.Items.Num() - 1);
+	AddBuildingData(std::move(Data));
+	LightweightBuildableToArrayIndex.FindOrAdd(BuildableClass.Get()).Add(InstanceIndex, CurrentBuildingNum - 1);
 }
 
 
@@ -334,25 +290,12 @@ void ACartographBuildingDataSubsystem::RemoveBuildingDuringRuntime(const TSoftCl
 	}
 
 	OnBuildingDataInvalidated(TypeHash);
-	if (const int LastIndex = BuildingDataArray.Items.Num() - 1;
-		ArrayIndex != LastIndex)
-	{
-		const auto& BuildingKey = BuildingDataArray.Items[LastIndex].BuildingKey;
-		if (const auto* BuildableKey = std::get_if<TObjectKey<AFGBuildable>>(&BuildingKey))
-		{
-			BuildableToArrayIndex[*BuildableKey] = ArrayIndex;
-		}
-		else
-		{
-			const auto& [Type, InstanceIndex] = std::get<std::pair<TSoftClassPtr<AFGBuildable>, int32>>(BuildingKey);
-			LightweightBuildableToArrayIndex[Type][InstanceIndex] = ArrayIndex;
-		}
-	}
-	BuildingDataArray.Items.RemoveAtSwap(ArrayIndex);
-	BuildingDataArray.MarkArrayDirty();
+
+	RemoveBuildingData(ArrayIndex);
 
 	BuildingCountPerType.FindOrAdd(TypeHash)--;
 }
+
 
 void ACartographBuildingDataSubsystem::SendDataToNiagara()
 {
@@ -392,25 +335,28 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 		SplineOrdersParam.Reset(*Count * AveragePointCountPerSpline);
 
 		int32 SplineIndex = 0;
-		for (const FBuildingData& BuildingData : BuildingDataArray.Items)
+		for (const TObjectPtr<ACartographBuildingDataHolder>& DataHolder : BuildingDataHolders)
 		{
-			if (BuildingData.BuildableClassHash != DirtyType)
+			for (const FBuildingData& BuildingData : DataHolder->BuildingDataArray.Items)
 			{
-				continue;
+				if (BuildingData.BuildableClassHash != DirtyType)
+				{
+					continue;
+				}
+
+				const FSplineBuildingData* SplineData = std::get_if<FSplineBuildingData>(&BuildingData.CuboidOrSplineData);
+				CARTO_LOG_ERROR_CONTINUE_IF_NULL(SplineData);
+
+				const int Size = SplineData->Points.Num();
+				for (int i = 0; i < Size; i++)
+				{
+					PositionsParam.Add(SplineData->Points[i]);
+					SplineGroupIdsParam.Add(SplineIndex);
+					SplineOrdersParam.Add(static_cast<float>(i));
+				}
+
+				SplineIndex++;
 			}
-
-			const FSplineBuildingData* SplineData = std::get_if<FSplineBuildingData>(&BuildingData.CuboidOrSplineData);
-			CARTO_LOG_ERROR_CONTINUE_IF_NULL(SplineData);
-
-			const int Size = SplineData->Points.Num();
-			for (int i = 0; i < Size; i++)
-			{
-				PositionsParam.Add(SplineData->Points[i]);
-				SplineGroupIdsParam.Add(SplineIndex);
-				SplineOrdersParam.Add(static_cast<float>(i));
-			}
-
-			SplineIndex++;
 		}
 
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
@@ -423,21 +369,24 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 		RotationsParam.Reset(*Count);
 		ScalesParam.Reset(*Count);
 
-		for (const FBuildingData& BuildingData : BuildingDataArray.Items)
+		for (const TObjectPtr<ACartographBuildingDataHolder>& DataHolder : BuildingDataHolders)
 		{
-			if (BuildingData.BuildableClassHash != DirtyType)
+			for (const FBuildingData& BuildingData : DataHolder->BuildingDataArray.Items)
 			{
-				continue;
+				if (BuildingData.BuildableClassHash != DirtyType)
+				{
+					continue;
+				}
+
+				const FCuboidBuildingData* CuboidData = std::get_if<FCuboidBuildingData>(&BuildingData.CuboidOrSplineData);
+				CARTO_LOG_ERROR_CONTINUE_IF_NULL(CuboidData);
+
+				const FTransform& Transform = CuboidData->Transform;
+
+				PositionsParam.Add(Transform.GetLocation());
+				RotationsParam.Add(Transform.GetRotation());
+				ScalesParam.Add(Transform.GetScale3D());
 			}
-
-			const FCuboidBuildingData* CuboidData = std::get_if<FCuboidBuildingData>(&BuildingData.CuboidOrSplineData);
-			CARTO_LOG_ERROR_CONTINUE_IF_NULL(CuboidData);
-
-			const FTransform& Transform = CuboidData->Transform;
-
-			PositionsParam.Add(Transform.GetLocation());
-			RotationsParam.Add(Transform.GetRotation());
-			ScalesParam.Add(Transform.GetScale3D());
 		}
 
 		UNiagaraDataInterfaceArrayFunctionLibrary::SetNiagaraArrayPosition(Niagara, "User.Positions", PositionsParam);
@@ -466,4 +415,76 @@ void ACartographBuildingDataSubsystem::SendDataToNiagara()
 	Niagara->Activate(true);
 
 	MapDrawSubsystem->MarkMapTextureDirty();
+}
+
+
+void ACartographBuildingDataSubsystem::AddBuildingData(FBuildingData BuildingData)
+{
+	if (BuildingDataHolders.IsEmpty() || BuildingDataHolders.Last()->BuildingDataArray.Items.Num() >= Cartograph::MAX_REPLICATED_ARRAY_LENGTH)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		BuildingDataHolders.Add(GetWorld()->SpawnActor<ACartographBuildingDataHolder>(SpawnParams));
+	}
+
+	FBuildingDataArray& BuildingDataArray = BuildingDataHolders.Last()->BuildingDataArray;
+	BuildingDataArray.MarkItemDirty(BuildingDataArray.Items.Add_GetRef(std::move(BuildingData)));
+
+	CurrentBuildingNum++;
+}
+
+
+void ACartographBuildingDataSubsystem::RemoveBuildingData(const uint32 Index)
+{
+	const std::div_t Div = std::div(Index, Cartograph::MAX_REPLICATED_ARRAY_LENGTH);
+	const uint32 HolderIndex = Div.quot;
+	const uint32 HolderArrayIndex = Div.rem;
+
+	TObjectPtr<ACartographBuildingDataHolder>& LastBuildingDataHolder = BuildingDataHolders.Last();
+	FBuildingDataArray& LastBuildingDataArray = LastBuildingDataHolder->BuildingDataArray;
+
+	FBuildingDataArray& BuildingDataArray = BuildingDataHolders[HolderIndex]->BuildingDataArray;
+
+	if (Index == CurrentBuildingNum - 1)
+	{
+		LastBuildingDataArray.Items.RemoveAt(LastBuildingDataArray.Items.Num() - 1);
+		LastBuildingDataArray.MarkArrayDirty();
+	}
+	else
+	{
+		FBuildingData& LastBuildingData = LastBuildingDataArray.Items.Last();
+
+		const auto& LastBuildingKey = LastBuildingData.BuildingKey;
+		if (const auto* BuildableKey = std::get_if<TObjectKey<AFGBuildable>>(&LastBuildingKey))
+		{
+			BuildableToArrayIndex[*BuildableKey] = Index;
+		}
+		else
+		{
+			const auto& [Type, InstanceIndex] = std::get<std::pair<TSoftClassPtr<AFGBuildable>, int32>>(LastBuildingKey);
+			LightweightBuildableToArrayIndex[Type][InstanceIndex] = Index;
+		}
+
+		if (HolderIndex == BuildingDataHolders.Num() - 1)
+		{
+			BuildingDataArray.Items.RemoveAtSwap(HolderArrayIndex);
+			BuildingDataArray.MarkArrayDirty();
+		}
+		else
+		{
+			BuildingDataArray.Items[HolderArrayIndex] = std::move(LastBuildingData);
+			BuildingDataArray.MarkItemDirty(BuildingDataArray.Items[HolderArrayIndex]);
+
+			LastBuildingDataArray.Items.RemoveAt(LastBuildingDataArray.Items.Num() - 1);
+			LastBuildingDataArray.MarkArrayDirty();
+		}
+	}
+
+	if (LastBuildingDataHolder->BuildingDataArray.Items.IsEmpty())
+	{
+		BuildingDataHolders.Pop()->Destroy();
+	}
+
+	CurrentBuildingNum--;
 }
