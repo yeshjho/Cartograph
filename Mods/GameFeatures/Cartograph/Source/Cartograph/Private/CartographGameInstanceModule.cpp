@@ -26,6 +26,7 @@
 #include "CartographBuildingDataSubsystem.h"
 #include "CartographMapDrawSubsystem.h"
 #include "Cartograph_ConfigStruct.h"
+#include "UI/CartographMainMapWidget.h"
 
 
 #define LOCTEXT_NAMESPACE "Cartograph"
@@ -93,6 +94,8 @@ namespace
 				}
 			};
 		SUBSCRIBE_UOBJECT_METHOD_AFTER(AFGLightweightBuildableSubsystem, InvalidateRuntimeInstanceDataForIndex, LambdaAfterInvalidateRuntimeInstanceDataForIndex);
+	
+		UCartographMainMapWidget::InstallSetRenderTranslationHook();
 	}
 
 

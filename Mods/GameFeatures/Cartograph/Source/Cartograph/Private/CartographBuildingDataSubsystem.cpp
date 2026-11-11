@@ -245,9 +245,12 @@ void ACartographBuildingDataSubsystem::GatherInitialBuildings()
 
 	CARTO_LOG("InitialBuildableGather Finished");
 
-	for (const auto [ClassHash, Count] : BuildingCountPerType)
+	if constexpr (Cartograph::ENABLE_DEBUG_LOG)
 	{
-		CARTO_LOG_DEBUG("Building: %u, Count: %u", ClassHash, Count);
+		for (const auto [ClassHash, Count] : BuildingCountPerType)
+		{
+			CARTO_LOG_DEBUG("Building: %u, Count: %u", ClassHash, Count);
+		}
 	}
 }
 

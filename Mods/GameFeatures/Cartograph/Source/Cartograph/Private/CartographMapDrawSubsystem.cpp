@@ -328,8 +328,8 @@ void ACartographMapDrawSubsystem::OnZFilterUpdated(const float Min, const float 
 {
 	constexpr float MAP_HEIGHT_METERS = Cartograph::MAX_HEIGHT_METERS - Cartograph::MIN_HEIGHT_METERS;
 
-	MinZFilter = FMath::Floor(Min * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS);
-	MaxZFilter = FMath::CeilToInt(Max * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS);
+	MinZFilter = FMath::Floor(Min * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS) * 100.f;
+	MaxZFilter = FMath::CeilToInt(Max * MAP_HEIGHT_METERS + Cartograph::MIN_HEIGHT_METERS) * 100.f;
 
 	CARTO_LOG("Min is now %f and max is now %f", MinZFilter, MaxZFilter);
 

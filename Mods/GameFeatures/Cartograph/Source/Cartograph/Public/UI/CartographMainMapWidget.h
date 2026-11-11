@@ -17,6 +17,9 @@ class CARTOGRAPH_API UCartographMainMapWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
+public:
+    static void InstallSetRenderTranslationHook();
+
 protected:
     virtual void NativeConstruct() override;
     virtual void NativeDestruct() override;
@@ -25,9 +28,6 @@ protected:
 
 
 protected:
-    UPROPERTY(meta = (BindWidget))
-    TObjectPtr<UScaleBox> BuildingLayerScaleBox;
-
     UPROPERTY(meta = (BindWidget))
     TObjectPtr<UImage> BuildingLayerImage;
 
