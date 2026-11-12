@@ -229,6 +229,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftObjectPtr<UNiagaraSystem> SplineNiagaraSystem;
 
+	UPROPERTY(EditDefaultsOnly, Category = "UI")
+	TSoftObjectPtr<UTextureRenderTarget2D> MapRenderTarget;
+
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "UI")
 	TSoftClassPtr<UUserWidget> MapContainerWidget;

@@ -28,7 +28,7 @@ protected:
 
 
 protected:
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
     TObjectPtr<UImage> BuildingLayerImage;
 
 private:

@@ -158,26 +158,18 @@ void ACartographMapDrawSubsystem::OnMapDisplaySizedChanged(const FVector2D& Disp
 		FMath::Max(1, static_cast<int>(FMath::RoundToInt(DesiredSize.Y * Scale)))
 	};
 
-	if (RenderTarget &&
-		RenderTarget->SizeX == NewSize.X && RenderTarget->SizeY == NewSize.Y)
+	auto* GameInstanceModule = UCartographGameInstanceModule::Instance;
+	CARTO_LOG_ERROR_RETURN_IF_NULL(GameInstanceModule);
+
+	UTextureRenderTarget2D* RenderTarget = GameInstanceModule->MapRenderTarget.LoadSynchronous();
+	CARTO_LOG_ERROR_RETURN_IF_NULL(RenderTarget);
+
+	if (RenderTarget->SizeX == NewSize.X && RenderTarget->SizeY == NewSize.Y)
 	{
 		return;
 	}
 
-	if (!RenderTarget)
-	{
-		RenderTarget = NewObject<UTextureRenderTarget2D>(this, TEXT("CartographMapRenderTarget"), RF_Transient);
-		RenderTarget->ClearColor = FLinearColor::Transparent;
-		RenderTarget->bAutoGenerateMips = false;
-		RenderTarget->Filter = TF_Bilinear;
-		RenderTarget->InitCustomFormat(NewSize.X, NewSize.Y, PF_B8G8R8A8, false);
-
-		SceneCaptureComponent->TextureTarget = RenderTarget;
-	}
-	else
-	{
-		RenderTarget->ResizeTarget(NewSize.X, NewSize.Y);
-	}
+	RenderTarget->ResizeTarget(NewSize.X, NewSize.Y);
 
 	MarkMapTextureDirty();
 }
@@ -205,28 +197,39 @@ void ACartographMapDrawSubsystem::BeginPlay()
 	NiagaraActor->AddInstanceComponent(NiagaraActorRoot);
 	NiagaraActorRoot->RegisterComponent();
 
-
-	SceneCaptureComponent = NewObject<UCartographSceneCaptureComponent2D>(NiagaraActor, "SceneCaptureComponent");
+	SceneCaptureComponent = NewObject<UCartographSceneCaptureComponent2D>(NiagaraActor, TEXT("SceneCaptureComponent"));
 	NiagaraActor->AddInstanceComponent(SceneCaptureComponent);
 	SceneCaptureComponent->SetupAttachment(NiagaraActorRoot);
 
-	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Type::Orthographic;
+	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Orthographic;
+	SceneCaptureComponent->CaptureSource = ESceneCaptureSource::SCS_SceneColorHDR;
+	SceneCaptureComponent->CompositeMode = ESceneCaptureCompositeMode::SCCM_Overwrite;
 
 	SceneCaptureComponent->bCaptureEveryFrame = false;
 	SceneCaptureComponent->bCaptureOnMovement = false;
 
 	SceneCaptureComponent->bAutoCalculateOrthoPlanes = false;
 	SceneCaptureComponent->bUpdateOrthoPlanes = false;
+	SceneCaptureComponent->bUseCustomProjectionMatrix = false;
+	SceneCaptureComponent->bAutoCalculateOrthoPlanes = true;
+	SceneCaptureComponent->bUpdateOrthoPlanes = true;
 
 	SceneCaptureComponent->bUseCustomProjectionMatrix = true;
+	SceneCaptureComponent->ShowFlags.Atmosphere = false;
+	SceneCaptureComponent->ShowFlags.Fog = false;
+	SceneCaptureComponent->ShowFlags.VolumetricFog = false;
 
 	SceneCaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-
 	SceneCaptureComponent->SetWorldRotation(FRotator{ -90.f, -90.f, 0.f });
-
 	SceneCaptureComponent->RegisterComponent();
 
-	CARTO_LOG("CartographMapDrawSubsystem BeginPlay, created Niagara actor and scene capture component");
+	auto* GameInstanceModule = UCartographGameInstanceModule::Instance;
+	CARTO_LOG_ERROR_RETURN_IF_NULL(GameInstanceModule);
+
+	UTextureRenderTarget2D* RenderTarget = GameInstanceModule->MapRenderTarget.LoadSynchronous();
+	SceneCaptureComponent->TextureTarget = RenderTarget;
+
+	CARTO_LOG("CartographMapDrawSubsystem BeginPlay: created Niagara actor and scene capture");
 }
 
 
@@ -241,13 +244,11 @@ void ACartographMapDrawSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReas
 	Super::EndPlay(EndPlayReason);
 }
 
-
 void ACartographMapDrawSubsystem::RedrawMap()
 {
-	if (!RenderTarget)
-	{
-		return;
-	}
+	auto* GameInstanceModule = UCartographGameInstanceModule::Instance;
+	CARTO_LOG_ERROR_RETURN_IF_NULL(GameInstanceModule);
+	UTextureRenderTarget2D* RenderTarget = GameInstanceModule->MapRenderTarget.LoadSynchronous();
 
 	constexpr float Z_PADDING = 100.f;
 	constexpr float WORLD_CM_PER_PIXEL_AT_ZOOM_1_X = Cartograph::MAP_WIDTH_CENTIMETERS / 1024.f;
@@ -287,9 +288,9 @@ void ACartographMapDrawSubsystem::RedrawMap()
 	SceneCaptureComponent->CustomProjectionMatrix = ProjectionInfo.CalculateProjectionMatrix();
 
 	SceneCaptureComponent->ClearShowOnlyComponents();
-	SceneCaptureComponent->ShowOnlyActorComponents(this);
+	SceneCaptureComponent->ShowOnlyActorComponents(NiagaraActor);
 
-	if (auto* GameInstanceModule = UCartographGameInstanceModule::Instance)
+	if (GameInstanceModule)
 	{
 		const FRuntimeConfig& RuntimeConfig = GameInstanceModule->RuntimeConfig;
 		for (const auto& [ClassHash, NiagaraComponent] : NiagaraComponentPerType)
@@ -311,13 +312,13 @@ void ACartographMapDrawSubsystem::RedrawMap()
 				SceneCaptureComponent->RemoveShowOnlyComponent(NiagaraComponent);
 			}
 			else if (const TSet<FName>* SubCategories = RuntimeConfig.DisabledLayerSubCategory.Find(LayerData->MainCategoryCache);
-					 SubCategories->Contains(LayerData->SubCategoryCache))
+					 SubCategories && SubCategories->Contains(LayerData->SubCategoryCache))
 			{
 				SceneCaptureComponent->RemoveShowOnlyComponent(NiagaraComponent);
 			}
 		}
 	}
-
+	
 	SceneCaptureComponent->CaptureSceneDeferred();
 
 	IsMapTextureDirty = false;

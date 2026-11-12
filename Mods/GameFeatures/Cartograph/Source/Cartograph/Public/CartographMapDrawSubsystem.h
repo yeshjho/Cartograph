@@ -36,7 +36,6 @@ public:
 	void MarkMapTextureDirty();
 
 	UNiagaraComponent* GetNiagaraComponentPerType(uint32 ClassHash);
-	UTextureRenderTarget2D* GetRenderTarget() { return RenderTarget; }
 
 	void OnMapOpen();
 	void OnMapClose();
@@ -77,9 +76,6 @@ protected:
 	float MaxZFilter = Cartograph::MAX_HEIGHT_METERS;
 	float ZoomScale = 1.f;
 	FVector2D MapCenterWorldPosition = { Cartograph::MAP_CENTER_WORLD_COORD_X, Cartograph::MAP_CENTER_WORLD_COORD_Y };
-
-	UPROPERTY()
-	TObjectPtr<UTextureRenderTarget2D> RenderTarget;
 
 	UPROPERTY()
 	TObjectPtr<AActor> NiagaraActor;

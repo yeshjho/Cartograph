@@ -6,6 +6,7 @@
 #include "FGBlueprintFunctionLibrary.h"
 #include "UI/FGMapWidget.h"
 
+#include "CartographGameInstanceModule.h"
 #include "CartographMapDrawSubsystem.h"
 
 
@@ -100,12 +101,12 @@ void UCartographMainMapWidget::NativeTick(const FGeometry& MyGeometry, const flo
 		MapDrawSubsystem->OnMapDisplaySizedChanged(MapDisplaySize);
 	}
 
+    auto* GameInstanceModule = UCartographGameInstanceModule::Instance;
+    CARTO_LOG_ERROR_RETURN_IF_NULL(GameInstanceModule);
 
-    UTextureRenderTarget2D* RenderTarget = MapDrawSubsystem->GetRenderTarget();
-    if (!RenderTarget)
-    {
-        return;
-    }
+
+    UTextureRenderTarget2D* RenderTarget = GameInstanceModule->MapRenderTarget.LoadSynchronous();
+    CARTO_LOG_ERROR_RETURN_IF_NULL(RenderTarget);
 
 	const FVector2D NewSize{ static_cast<double>(RenderTarget->SizeX), static_cast<double>(RenderTarget->SizeY) };
 
@@ -116,12 +117,6 @@ void UCartographMainMapWidget::NativeTick(const FGeometry& MyGeometry, const flo
 
     FSlateBrush Brush = BuildingLayerImage->GetBrush();
 
-    Brush.SetResourceObject(RenderTarget);
 	Brush.SetImageSize(NewSize);
-    Brush.DrawAs = ESlateBrushDrawType::Image;
-
-    BuildingLayerImage->SetBrush(Brush);
-
-	LastKnownRenderTarget = RenderTarget;
     LastBrushSize = NewSize;
 }
