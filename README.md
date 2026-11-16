@@ -1,3 +1,6 @@
+## Development halted as it's superseded by https://github.com/leanwrldd/FactoryAtlas!
+
+<details> <summary> Old front page </summary>
 # 🗺️ Cartograph
 **Display your buildings on the map!**
 
@@ -25,6 +28,7 @@ I use 2 remotes locally for this project, [SML](https://github.com/satisfactorym
 - [SCIM](https://satisfactory-calculator.com/): Inspiration for this mod! Also referred to its code to figure out the exact map coordinates.
 - [UE5Coro](https://github.com/landelare/ue5coro): Amazing coroutine plugin that has various gameplay logic helpers.
 - And of course, SML developers.
+</details>
 
 ---
 
